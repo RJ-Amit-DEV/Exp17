@@ -17,7 +17,7 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("http://localhost:3000/students")
+    fetch("https://exp17.onrender.com/students")
       .then((res) => res.json())
       .then((data) => {
         setStudents(data);
