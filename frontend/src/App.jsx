@@ -8,7 +8,7 @@ import "./App.css";
 
 const API =
   import.meta.env.VITE_API_URL ||
-  "http://localhost:3000/api";
+  "https://exp17.onrender.com/api";
 
 const makeId = () =>
   crypto.randomUUID();
