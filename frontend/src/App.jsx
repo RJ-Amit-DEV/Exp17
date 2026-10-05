@@ -995,14 +995,18 @@ function App() {
             Lab Management
           </h1>
 
-          {teacherName && (
-            <p>
-              Teacher:{" "}
-              <strong>
-                {teacherName}
-              </strong>
-            </p>
-          )}
+{teacherName && (
+  <p>
+    Teacher: <strong>{teacherName}</strong>{" "}
+    <button
+      type="button"
+      className="edit-teacher-btn"
+      onClick={() => setShowTeacherForm(true)}
+    >
+      Edit
+    </button>
+  </p>
+)}
         </div>
 
         <button

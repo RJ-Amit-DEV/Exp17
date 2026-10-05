@@ -835,3 +835,16 @@ td select:focus {
     bottom: 15px;
   }
 }
+
+.edit-teacher-btn {
+  border: none;
+  background: transparent;
+  color: #2563eb;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.edit-teacher-btn:hover {
+  text-decoration: underline;
+}
