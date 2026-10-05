@@ -7,14 +7,104 @@ const crypto = require("crypto");
 
 const app = express();
 
-app.use(cors());
-app.use(express.json({ limit: "1mb" }));
-
 const PORT = process.env.PORT || 3000;
 
+app.use(
+  cors({
+    origin: true,
+    credentials: false
+  })
+);
+
+app.use(express.json({ limit: "2mb" }));
+
 // ======================================================
-// MONGODB SCHEMAS
+// HELPERS
 // ======================================================
+
+const makeId = () => crypto.randomUUID();
+
+function hashValue(value, salt) {
+  return crypto
+    .createHash("sha256")
+    .update(`${salt}:${value}`)
+    .digest("hex");
+}
+
+function createCodeHash(code) {
+  const salt = crypto.randomBytes(16).toString("hex");
+
+  return {
+    salt,
+    hash: hashValue(code, salt)
+  };
+}
+
+function createSession() {
+  const token = crypto.randomBytes(32).toString("hex");
+  const salt = crypto.randomBytes(16).toString("hex");
+
+  return {
+    token,
+    salt,
+    hash: hashValue(token, salt)
+  };
+}
+
+function getSessionExpiry() {
+  const expiry = new Date();
+  expiry.setDate(expiry.getDate() + 30);
+  return expiry;
+}
+
+function normalizeText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
+
+// ======================================================
+// SCHEMAS
+// ======================================================
+
+const teacherSchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true
+    },
+
+    codeSalt: {
+      type: String,
+      required: true
+    },
+
+    codeHash: {
+      type: String,
+      required: true
+    },
+
+    sessionSalt: {
+      type: String,
+      default: ""
+    },
+
+    sessionHash: {
+      type: String,
+      default: ""
+    },
+
+    sessionExpiresAt: {
+      type: Date,
+      default: null
+    }
+  },
+  {
+    timestamps: true
+  }
+);
 
 const columnSchema = new mongoose.Schema(
   {
@@ -38,14 +128,11 @@ const columnSchema = new mongoose.Schema(
     maxMarks: {
       type: Number,
       default: 0
-    },
-
-    builtIn: {
-      type: Boolean,
-      default: false
     }
   },
-  { _id: false }
+  {
+    _id: false
+  }
 );
 
 const studentSchema = new mongoose.Schema(
@@ -75,7 +162,9 @@ const studentSchema = new mongoose.Schema(
       default: {}
     }
   },
-  { _id: false }
+  {
+    _id: false
+  }
 );
 
 const batchSchema = new mongoose.Schema(
@@ -100,11 +189,26 @@ const batchSchema = new mongoose.Schema(
       default: []
     }
   },
-  { _id: false }
+  {
+    _id: false
+  }
 );
 
 const labSchema = new mongoose.Schema(
   {
+    teacherId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Teacher",
+      index: true,
+      default: null
+    },
+
+    // Used only for migration of old data.
+    legacyTeacherName: {
+      type: String,
+      default: ""
+    },
+
     name: {
       type: String,
       required: true,
@@ -121,308 +225,426 @@ const labSchema = new mongoose.Schema(
       default: []
     }
   },
-  { timestamps: true }
+  {
+    timestamps: true
+  }
 );
 
+const Teacher = mongoose.model("Teacher", teacherSchema);
 const Lab = mongoose.model("Lab", labSchema);
 
 // ======================================================
-// HELPERS
+// DEFAULT BATCH
 // ======================================================
 
-const makeId = () => crypto.randomUUID();
-
-const defaultColumns = () => [
-  {
-    id: makeId(),
-    label: "Experiments File",
-    type: "status",
-    maxMarks: 0,
-    builtIn: true
-  },
-  {
-    id: makeId(),
-    label: "Experiment Marks",
-    type: "number",
-    maxMarks: 20,
-    builtIn: true
-  },
-  {
-    id: makeId(),
-    label: "Assignments",
-    type: "status",
-    maxMarks: 0,
-    builtIn: true
-  },
-  {
-    id: makeId(),
-    label: "Assignment Marks",
-    type: "number",
-    maxMarks: 10,
-    builtIn: true
-  }
-];
-
-const defaultBatch = (name) => ({
-  id: makeId(),
-  name,
-  columns: defaultColumns(),
-  students: []
-});
-
-function normalize(text) {
-  return String(text || "")
-    .toLowerCase()
-    .replace(/[?!.,]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+function defaultColumns() {
+  return [
+    {
+      id: makeId(),
+      label: "Experiments File",
+      type: "status",
+      maxMarks: 0
+    },
+    {
+      id: makeId(),
+      label: "Experiment Marks",
+      type: "number",
+      maxMarks: 20
+    },
+    {
+      id: makeId(),
+      label: "Assignments",
+      type: "status",
+      maxMarks: 0
+    },
+    {
+      id: makeId(),
+      label: "Assignment Marks",
+      type: "number",
+      maxMarks: 10
+    }
+  ];
 }
 
-// ------------------------------------------------------
-// Fix old column data
-// ------------------------------------------------------
-
-function normalizeColumns(columns) {
-  if (!Array.isArray(columns) || columns.length === 0) {
-    return defaultColumns();
-  }
-
-  return columns.map((column) => {
-    const label = normalize(column.label);
-
-    if (label === "experiments file") {
-      return {
-        ...column,
-        label: "Experiments File",
-        type: "status",
-        maxMarks: 0,
-        builtIn: true
-      };
-    }
-
-    if (
-      label === "experiment marks" ||
-      label === "experiment mark"
-    ) {
-      return {
-        ...column,
-        label: "Experiment Marks",
-        type: "number",
-        maxMarks: 20,
-        builtIn: true
-      };
-    }
-
-    if (label === "assignments" || label === "assignment") {
-      return {
-        ...column,
-        label: "Assignments",
-        type: "status",
-        maxMarks: 0,
-        builtIn: true
-      };
-    }
-
-    if (
-      label === "assignment marks" ||
-      label === "assignment mark"
-    ) {
-      return {
-        ...column,
-        label: "Assignment Marks",
-        type: "number",
-        maxMarks: 10,
-        builtIn: true
-      };
-    }
-
-    return {
-      ...column,
-      builtIn: Boolean(column.builtIn)
-    };
-  });
+function defaultBatch(name) {
+  return {
+    id: makeId(),
+    name,
+    columns: defaultColumns(),
+    students: []
+  };
 }
 
 // ======================================================
-// BASIC ROUTE
+// BASIC ROUTES
 // ======================================================
 
 app.get("/", (req, res) => {
   res.json({
-    message: "Lab Management API is running"
+    message: "Exp17 Lab Management API is running"
   });
 });
 
 // ======================================================
-// LAB ROUTES
+// AUTHENTICATION
 // ======================================================
 
-// Get all labs
-app.get("/api/labs", async (req, res) => {
+app.post("/api/auth/login", async (req, res) => {
   try {
-    const labs = await Lab.find().sort({
-      createdAt: -1
-    });
+    const name = String(req.body.name || "").trim();
+    const code = String(req.body.code || "").trim();
 
-    const normalizedLabs = labs.map((lab) => {
-      const plainLab = lab.toObject();
+    if (!name) {
+      return res.status(400).json({
+        message: "Teacher name is required"
+      });
+    }
 
-      plainLab.batches = plainLab.batches.map(
-        (batch) => ({
-          ...batch,
-          columns: normalizeColumns(batch.columns)
-        })
+    if (!/^\d{4}$/.test(code)) {
+      return res.status(400).json({
+        message: "Access code must contain exactly 4 digits"
+      });
+    }
+
+    let teacher = await Teacher.findOne({ name });
+
+    // --------------------------------------------------
+    // NEW TEACHER
+    // --------------------------------------------------
+
+    if (!teacher) {
+      const codeData = createCodeHash(code);
+
+      teacher = await Teacher.create({
+        name,
+        codeSalt: codeData.salt,
+        codeHash: codeData.hash
+      });
+
+      // ------------------------------------------------
+      // Migrate old labs belonging to same teacher name
+      // ------------------------------------------------
+
+      await Lab.updateMany(
+        {
+          teacherId: null,
+          legacyTeacherName: name
+        },
+        {
+          $set: {
+            teacherId: teacher._id
+          }
+        }
+      );
+    }
+
+    // --------------------------------------------------
+    // EXISTING TEACHER
+    // --------------------------------------------------
+
+    else {
+      const enteredHash = hashValue(
+        code,
+        teacher.codeSalt
       );
 
-      return plainLab;
-    });
-
-    res.json(normalizedLabs);
-  } catch (error) {
-    console.error(error);
-
-    res.status(500).json({
-      message: "Failed to load labs"
-    });
-  }
-});
-
-// Get one lab
-app.get("/api/labs/:labId", async (req, res) => {
-  try {
-    const lab = await Lab.findById(
-      req.params.labId
-    );
-
-    if (!lab) {
-      return res.status(404).json({
-        message: "Lab not found"
-      });
-    }
-
-    const plainLab = lab.toObject();
-
-    plainLab.batches = plainLab.batches.map(
-      (batch) => ({
-        ...batch,
-        columns: normalizeColumns(batch.columns)
-      })
-    );
-
-    res.json(plainLab);
-  } catch (error) {
-    console.error(error);
-
-    res.status(500).json({
-      message: "Failed to load lab"
-    });
-  }
-});
-
-// Create lab
-app.post("/api/labs", async (req, res) => {
-  try {
-    const { name, subject } = req.body;
-
-    if (!name || !name.trim()) {
-      return res.status(400).json({
-        message: "Lab name is required"
-      });
-    }
-
-    const lab = await Lab.create({
-      name: name.trim(),
-      subject: subject?.trim() || "",
-      batches: []
-    });
-
-    res.status(201).json(lab);
-  } catch (error) {
-    console.error(error);
-
-    res.status(500).json({
-      message: "Failed to create lab"
-    });
-  }
-});
-
-// Edit lab
-app.put("/api/labs/:labId", async (req, res) => {
-  try {
-    const { name, subject } = req.body;
-
-    const lab = await Lab.findByIdAndUpdate(
-      req.params.labId,
-      {
-        name: name?.trim(),
-        subject: subject?.trim() || ""
-      },
-      {
-        new: true,
-        runValidators: true
+      if (enteredHash !== teacher.codeHash) {
+        return res.status(401).json({
+          message: "Incorrect access code"
+        });
       }
-    );
-
-    if (!lab) {
-      return res.status(404).json({
-        message: "Lab not found"
-      });
     }
 
-    res.json(lab);
-  } catch (error) {
-    console.error(error);
+    // --------------------------------------------------
+    // CREATE SESSION
+    // --------------------------------------------------
 
-    res.status(500).json({
-      message: "Failed to update lab"
-    });
-  }
-});
+    const session = createSession();
 
-// Delete lab
-app.delete("/api/labs/:labId", async (req, res) => {
-  try {
-    const lab = await Lab.findByIdAndDelete(
-      req.params.labId
-    );
+    teacher.sessionSalt = session.salt;
+    teacher.sessionHash = session.hash;
+    teacher.sessionExpiresAt = getSessionExpiry();
 
-    if (!lab) {
-      return res.status(404).json({
-        message: "Lab not found"
-      });
-    }
+    await teacher.save();
 
     res.json({
-      message: "Lab deleted"
+      token: session.token,
+      teacher: {
+        id: teacher._id,
+        name: teacher.name
+      }
     });
   } catch (error) {
-    console.error(error);
+    console.error("LOGIN ERROR:", error);
 
     res.status(500).json({
-      message: "Failed to delete lab"
+      message: "Login failed"
     });
   }
 });
 
 // ======================================================
-// BATCH ROUTES
+// AUTH MIDDLEWARE
 // ======================================================
 
-// Create batch
-app.post(
-  "/api/labs/:labId/batches",
+async function requireTeacher(req, res, next) {
+  try {
+    const token = String(
+      req.headers["x-teacher-token"] || ""
+    ).trim();
+
+    if (!token) {
+      return res.status(401).json({
+        message: "Authentication required"
+      });
+    }
+
+    const teachers = await Teacher.find({
+      sessionHash: {
+        $ne: ""
+      }
+    });
+
+    let matchedTeacher = null;
+
+    for (const teacher of teachers) {
+      if (
+        !teacher.sessionExpiresAt ||
+        teacher.sessionExpiresAt <= new Date()
+      ) {
+        continue;
+      }
+
+      const hash = hashValue(
+        token,
+        teacher.sessionSalt
+      );
+
+      if (hash === teacher.sessionHash) {
+        matchedTeacher = teacher;
+        break;
+      }
+    }
+
+    if (!matchedTeacher) {
+      return res.status(401).json({
+        message: "Session expired or invalid"
+      });
+    }
+
+    req.teacher = matchedTeacher;
+
+    next();
+  } catch (error) {
+    console.error("AUTH ERROR:", error);
+
+    res.status(401).json({
+      message: "Authentication failed"
+    });
+  }
+}
+
+// ======================================================
+// CURRENT TEACHER
+// ======================================================
+
+app.get(
+  "/api/auth/me",
+  requireTeacher,
+  async (req, res) => {
+    res.json({
+      teacher: {
+        id: req.teacher._id,
+        name: req.teacher.name
+      }
+    });
+  }
+);
+
+// ======================================================
+// CHANGE TEACHER NAME
+// ======================================================
+
+app.put(
+  "/api/teacher/name",
+  requireTeacher,
   async (req, res) => {
     try {
-      const { name } = req.body;
+      const newName = String(
+        req.body.newTeacherName || ""
+      ).trim();
 
-      if (!name || !name.trim()) {
+      if (!newName) {
         return res.status(400).json({
-          message: "Batch name is required"
+          message: "Teacher name is required"
         });
       }
 
-      const lab = await Lab.findById(
-        req.params.labId
+      if (newName === req.teacher.name) {
+        return res.json({
+          teacher: {
+            id: req.teacher._id,
+            name: req.teacher.name
+          }
+        });
+      }
+
+      const existing = await Teacher.findOne({
+        name: newName,
+        _id: {
+          $ne: req.teacher._id
+        }
+      });
+
+      if (existing) {
+        return res.status(409).json({
+          message: "That teacher name is already in use"
+        });
+      }
+
+      const oldName = req.teacher.name;
+
+      req.teacher.name = newName;
+
+      await req.teacher.save();
+
+      await Lab.updateMany(
+        {
+          teacherId: req.teacher._id
+        },
+        {
+          $set: {
+            legacyTeacherName: newName
+          }
+        }
+      );
+
+      // Also update old legacy records belonging to this teacher.
+      await Lab.updateMany(
+        {
+          teacherId: null,
+          legacyTeacherName: oldName
+        },
+        {
+          $set: {
+            teacherId: req.teacher._id,
+            legacyTeacherName: newName
+          }
+        }
+      );
+
+      res.json({
+        teacher: {
+          id: req.teacher._id,
+          name: req.teacher.name
+        }
+      });
+    } catch (error) {
+      console.error(error);
+
+      res.status(500).json({
+        message: "Failed to update teacher name"
+      });
+    }
+  }
+);
+
+// ======================================================
+// LABS
+// ======================================================
+
+app.get(
+  "/api/labs",
+  requireTeacher,
+  async (req, res) => {
+    try {
+      const labs = await Lab.find({
+        teacherId: req.teacher._id
+      }).sort({
+        createdAt: -1
+      });
+
+      res.json(labs);
+    } catch (error) {
+      console.error(error);
+
+      res.status(500).json({
+        message: "Failed to load labs"
+      });
+    }
+  }
+);
+
+app.post(
+  "/api/labs",
+  requireTeacher,
+  async (req, res) => {
+    try {
+      const name = String(
+        req.body.name || ""
+      ).trim();
+
+      const subject = String(
+        req.body.subject || ""
+      ).trim();
+
+      if (!name) {
+        return res.status(400).json({
+          message: "Lab name is required"
+        });
+      }
+
+      const lab = await Lab.create({
+        teacherId: req.teacher._id,
+        legacyTeacherName: req.teacher.name,
+        name,
+        subject,
+        batches: []
+      });
+
+      res.status(201).json(lab);
+    } catch (error) {
+      console.error(error);
+
+      res.status(500).json({
+        message: "Failed to create lab"
+      });
+    }
+  }
+);
+
+app.put(
+  "/api/labs/:labId",
+  requireTeacher,
+  async (req, res) => {
+    try {
+      const name = String(
+        req.body.name || ""
+      ).trim();
+
+      const subject = String(
+        req.body.subject || ""
+      ).trim();
+
+      if (!name) {
+        return res.status(400).json({
+          message: "Lab name is required"
+        });
+      }
+
+      const lab = await Lab.findOneAndUpdate(
+        {
+          _id: req.params.labId,
+          teacherId: req.teacher._id
+        },
+        {
+          name,
+          subject
+        },
+        {
+          new: true,
+          runValidators: true
+        }
       );
 
       if (!lab) {
@@ -431,9 +653,77 @@ app.post(
         });
       }
 
-      const batch = defaultBatch(
-        name.trim()
-      );
+      res.json(lab);
+    } catch (error) {
+      console.error(error);
+
+      res.status(500).json({
+        message: "Failed to update lab"
+      });
+    }
+  }
+);
+
+app.delete(
+  "/api/labs/:labId",
+  requireTeacher,
+  async (req, res) => {
+    try {
+      const lab = await Lab.findOneAndDelete({
+        _id: req.params.labId,
+        teacherId: req.teacher._id
+      });
+
+      if (!lab) {
+        return res.status(404).json({
+          message: "Lab not found"
+        });
+      }
+
+      res.json({
+        message: "Lab deleted"
+      });
+    } catch (error) {
+      console.error(error);
+
+      res.status(500).json({
+        message: "Failed to delete lab"
+      });
+    }
+  }
+);
+
+// ======================================================
+// BATCHES
+// ======================================================
+
+app.post(
+  "/api/labs/:labId/batches",
+  requireTeacher,
+  async (req, res) => {
+    try {
+      const name = String(
+        req.body.name || ""
+      ).trim();
+
+      if (!name) {
+        return res.status(400).json({
+          message: "Batch name is required"
+        });
+      }
+
+      const lab = await Lab.findOne({
+        _id: req.params.labId,
+        teacherId: req.teacher._id
+      });
+
+      if (!lab) {
+        return res.status(404).json({
+          message: "Lab not found"
+        });
+      }
+
+      const batch = defaultBatch(name);
 
       lab.batches.push(batch);
 
@@ -450,14 +740,15 @@ app.post(
   }
 );
 
-// Delete batch
 app.delete(
   "/api/labs/:labId/batches/:batchId",
+  requireTeacher,
   async (req, res) => {
     try {
-      const lab = await Lab.findById(
-        req.params.labId
-      );
+      const lab = await Lab.findOne({
+        _id: req.params.labId,
+        teacherId: req.teacher._id
+      });
 
       if (!lab) {
         return res.status(404).json({
@@ -494,16 +785,18 @@ app.delete(
 );
 
 // ======================================================
-// SAVE ENTIRE BATCH
+// SAVE BATCH
 // ======================================================
 
 app.put(
   "/api/labs/:labId/batches/:batchId",
+  requireTeacher,
   async (req, res) => {
     try {
-      const lab = await Lab.findById(
-        req.params.labId
-      );
+      const lab = await Lab.findOne({
+        _id: req.params.labId,
+        teacherId: req.teacher._id
+      });
 
       if (!lab) {
         return res.status(404).json({
@@ -524,9 +817,11 @@ app.put(
 
       const incoming = req.body;
 
-      const columns = normalizeColumns(
+      const columns = Array.isArray(
         incoming.columns
-      );
+      )
+        ? incoming.columns
+        : [];
 
       const students = Array.isArray(
         incoming.students
@@ -534,45 +829,11 @@ app.put(
         ? incoming.students
         : [];
 
-      // Validate marks
-      const numberColumns =
-        columns.filter(
-          (column) =>
-            column.type === "number"
-        );
-
-      for (const student of students) {
-        for (const column of numberColumns) {
-          const value = Number(
-            student.values?.[column.id]
-          );
-
-          if (!Number.isFinite(value)) {
-            continue;
-          }
-
-          if (value < 0) {
-            return res.status(400).json({
-              message: `${column.label} cannot be negative`
-            });
-          }
-
-          if (
-            Number(column.maxMarks) > 0 &&
-            value > Number(column.maxMarks)
-          ) {
-            return res.status(400).json({
-              message: `${column.label} cannot be greater than ${column.maxMarks}`
-            });
-          }
-        }
-      }
-
       lab.batches[index] = {
         id: req.params.batchId,
 
         name:
-          incoming.name ||
+          String(incoming.name || "").trim() ||
           "Unnamed Batch",
 
         columns,
@@ -584,7 +845,7 @@ app.put(
 
       res.json(lab.batches[index]);
     } catch (error) {
-      console.error(error);
+      console.error("SAVE BATCH ERROR:", error);
 
       res.status(500).json({
         message: "Failed to save batch"
@@ -594,34 +855,23 @@ app.put(
 );
 
 // ======================================================
-// LABBOT HELPERS
+// LABBOT
 // ======================================================
 
-function findMatchingLabs(
-  question,
-  labs
-) {
-  return labs.filter((lab) => {
-    const labName = normalize(
-      lab.name
-    );
-
-    return (
-      labName &&
-      question.includes(labName)
-    );
-  });
+function normalizeQuestion(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[?!.,'"]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-function findMatchingBatches(
-  question,
-  labs
-) {
-  const results = [];
+function findBatchMatches(question, labs) {
+  const result = [];
 
   for (const lab of labs) {
     for (const batch of lab.batches) {
-      const batchName = normalize(
+      const batchName = normalizeQuestion(
         batch.name
       );
 
@@ -629,619 +879,478 @@ function findMatchingBatches(
         batchName &&
         question.includes(batchName)
       ) {
-        results.push({
+        result.push({
           lab,
           batch
         });
-
-        continue;
-      }
-
-      const cleanedBatch =
-        batchName.replace(/\s+/g, "");
-
-      const match =
-        cleanedBatch.match(
-          /^i[-]?(\d+)$/
-        );
-
-      if (match) {
-        const number = match[1];
-
-        const patterns = [
-          `i${number}`,
-          `i-${number}`,
-          `batch ${number}`,
-          `batch i${number}`,
-          `batch i-${number}`
-        ];
-
-        if (
-          patterns.some((pattern) =>
-            question.includes(pattern)
-          )
-        ) {
-          results.push({
-            lab,
-            batch
-          });
-        }
       }
     }
   }
 
-  return results;
+  return result;
 }
 
-function findColumn(
-  batch,
-  words,
-  type = null
-) {
-  return batch.columns.find(
-    (column) => {
-      const label = normalize(
-        column.label
-      );
+function findLabMatches(question, labs) {
+  return labs.filter((lab) => {
+    const name = normalizeQuestion(lab.name);
 
-      const matches = words.some(
-        (word) =>
-          label.includes(word)
-      );
+    const subject = normalizeQuestion(
+      lab.subject
+    );
 
-      if (!matches) {
-        return false;
-      }
+    return (
+      (name && question.includes(name)) ||
+      (subject && question.includes(subject))
+    );
+  });
+}
 
-      if (
-        type &&
-        column.type !== type
-      ) {
-        return false;
-      }
+function getTargetBatches(question, labs) {
+  const batchMatches = findBatchMatches(
+    question,
+    labs
+  );
 
-      return true;
-    }
+  if (batchMatches.length) {
+    return batchMatches;
+  }
+
+  const labMatches = findLabMatches(
+    question,
+    labs
+  );
+
+  if (labMatches.length) {
+    return labMatches.flatMap((lab) =>
+      lab.batches.map((batch) => ({
+        lab,
+        batch
+      }))
+    );
+  }
+
+  return labs.flatMap((lab) =>
+    lab.batches.map((batch) => ({
+      lab,
+      batch
+    }))
   );
 }
 
-// ======================================================
-// STATUS
-// ======================================================
+function findColumn(batch, keywords, type) {
+  return batch.columns.find((column) => {
+    const label = normalizeQuestion(
+      column.label
+    );
+
+    const matches = keywords.some((word) =>
+      label.includes(word)
+    );
+
+    if (!matches) {
+      return false;
+    }
+
+    if (type && column.type !== type) {
+      return false;
+    }
+
+    return true;
+  });
+}
 
 function isSubmitted(value) {
-  const text = normalize(value);
-
-  return [
-    "submitted",
-    "done",
-    "completed",
-    "complete",
-    "finished",
-    "yes",
-    "true"
-  ].includes(text);
+  return normalizeQuestion(value) ===
+    "submitted";
 }
 
-function isPendingValue(value) {
-  return !isSubmitted(value);
-}
-
-// ======================================================
-// TOTAL
-// ======================================================
-
-function getTotal(
-  student,
-  batch
-) {
+function getStudentTotal(student, batch) {
   return batch.columns
     .filter(
       (column) =>
         column.type === "number"
     )
-    .reduce(
-      (total, column) => {
-        const value = Number(
-          student.values?.[
-            column.id
-          ]
-        );
+    .reduce((total, column) => {
+      const value = Number(
+        student.values?.[column.id]
+      );
 
-        return (
-          total +
-          (Number.isFinite(value)
-            ? value
-            : 0)
-        );
-      },
-      0
-    );
+      return (
+        total +
+        (Number.isFinite(value)
+          ? value
+          : 0)
+      );
+    }, 0);
 }
 
-// ======================================================
-// LABBOT ENGINE
-// ======================================================
-
 async function answerLabBot(
-  question
+  question,
+  teacherId
 ) {
-  const labs = await Lab.find();
+  const labs = await Lab.find({
+    teacherId
+  }).sort({
+    createdAt: -1
+  });
 
   if (!labs.length) {
     return "There is no lab data available yet.";
   }
 
-  const q = normalize(question);
+  const q = normalizeQuestion(question);
 
-  // ----------------------------------------------------
-  // Find batch
-  // ----------------------------------------------------
-
-  const matchedBatches =
-    findMatchingBatches(
-      q,
-      labs
-    );
-
-  let targetBatches =
-    matchedBatches;
-
-  // ----------------------------------------------------
-  // Find lab
-  // ----------------------------------------------------
-
-  if (!targetBatches.length) {
-    const matchedLabs =
-      findMatchingLabs(
-        q,
-        labs
-      );
-
-    if (matchedLabs.length) {
-      targetBatches =
-        matchedLabs.flatMap(
-          (lab) =>
-            lab.batches.map(
-              (batch) => ({
-                lab,
-                batch
-              })
-            )
-        );
-    }
+  if (!q) {
+    return "Please ask me something about your labs, batches, students, submissions or marks.";
   }
 
-  // ----------------------------------------------------
-  // Otherwise search all
-  // ----------------------------------------------------
+  const targetBatches = getTargetBatches(
+    q,
+    labs
+  );
 
   if (!targetBatches.length) {
-    targetBatches =
-      labs.flatMap(
-        (lab) =>
-          lab.batches.map(
-            (batch) => ({
-              lab,
-              batch
-            })
-          )
-      );
+    return "I could not find a matching batch or lab.";
   }
 
-  // ====================================================
-  // QUESTION TYPE
-  // ====================================================
+  const experimentColumnWords = [
+    "experiment",
+    "experiments",
+    "experiment file",
+    "file",
+    "exp"
+  ];
 
-  const isExperiment =
+  const assignmentColumnWords = [
+    "assignment",
+    "assignments"
+  ];
+
+  const experimentColumn =
+    targetBatches[0]
+      ? findColumn(
+          targetBatches[0].batch,
+          experimentColumnWords,
+          "status"
+        )
+      : null;
+
+  const assignmentColumn =
+    targetBatches[0]
+      ? findColumn(
+          targetBatches[0].batch,
+          assignmentColumnWords,
+          "status"
+        )
+      : null;
+
+  const asksPending =
+    q.includes("pending") ||
+    q.includes("not submitted") ||
+    q.includes("remaining") ||
+    q.includes("who has not");
+
+  const asksSubmitted =
+    q.includes("submitted") ||
+    q.includes("completed") ||
+    q.includes("complete");
+
+  const asksExperiment =
     q.includes("experiment") ||
     q.includes("experiments") ||
     q.includes("experiment file") ||
-    q.includes("experiments file") ||
-    q.includes("exp file") ||
     q.includes("exp");
 
-  const isAssignment =
+  const asksAssignment =
     q.includes("assignment") ||
-    q.includes("assignments") ||
-    q.includes("assignment file") ||
-    q.includes("assign");
+    q.includes("assignments");
 
-  const isDoneWord =
-    q.includes("done") ||
-    q.includes("completed") ||
-    q.includes("complete") ||
-    q.includes("finished");
+  // ----------------------------------------------------
+  // COUNT STUDENTS
+  // ----------------------------------------------------
 
-  const isPending =
-    q.includes("pending") ||
-    q.includes("not submitted") ||
-    q.includes("haven't submitted") ||
-    q.includes("have not submitted") ||
-    q.includes("missing") ||
-    q.includes("incomplete");
-
-  const isSubmittedQuestion =
-    q.includes("submitted") &&
-    !isPending;
-
-  // ====================================================
-  // TOTAL MARKS
-  // ====================================================
-
-  const wantsTotal =
-    q.includes("total") &&
-    (
-      q.includes("marks") ||
-      q.includes("score") ||
-      q.includes("student")
+  if (
+    q.includes("how many") &&
+    q.includes("student")
+  ) {
+    const count = targetBatches.reduce(
+      (total, item) =>
+        total + item.batch.students.length,
+      0
     );
 
-  if (wantsTotal) {
-    for (
-      const { batch } of targetBatches
-    ) {
-      const student =
-        batch.students.find(
-          (student) =>
-            student.name &&
-            q.includes(
-              normalize(
-                student.name
-              )
-            )
-        );
+    return `There are ${count} students in the selected batch${targetBatches.length > 1 ? "es" : ""}.`;
+  }
 
-      if (student) {
-        return `${student.name}'s total is ${getTotal(
-          student,
-          batch
-        )} marks.`;
+  // ----------------------------------------------------
+  // TOTAL MARKS FOR A STUDENT
+  // ----------------------------------------------------
+
+  if (
+    q.includes("total") &&
+    (q.includes("mark") ||
+      q.includes("score"))
+  ) {
+    for (const item of targetBatches) {
+      for (const student of item.batch.students) {
+        const studentName =
+          normalizeQuestion(student.name);
+
+        if (
+          studentName &&
+          q.includes(studentName)
+        ) {
+          return `${student.name}'s total is ${getStudentTotal(
+            student,
+            item.batch
+          )} marks.`;
+        }
       }
     }
   }
 
-  // ====================================================
-  // MARKS BELOW / ABOVE
-  // ====================================================
-
-  const belowMatch =
-    q.match(
-      /(?:below|less than|under)\s+(\d+)/
-    );
-
-  const aboveMatch =
-    q.match(
-      /(?:above|greater than|more than|over)\s+(\d+)/
-    );
+  // ----------------------------------------------------
+  // PENDING / SUBMITTED EXPERIMENTS
+  // ----------------------------------------------------
 
   if (
-    belowMatch ||
-    aboveMatch
+    asksExperiment &&
+    (asksPending || asksSubmitted)
   ) {
-    const limit = Number(
-      (belowMatch ||
-        aboveMatch)[1]
-    );
+    const names = [];
 
-    const isBelow =
-      Boolean(belowMatch);
-
-    const targetColumnWords =
-      isAssignment
-        ? [
-            "assignment",
-            "assignments"
-          ]
-        : [
-            "experiment",
-            "experiments",
-            "exp"
-          ];
-
-    const results = [];
-
-    for (
-      const { batch } of targetBatches
-    ) {
-      const column =
-        findColumn(
-          batch,
-          targetColumnWords,
-          "number"
-        );
+    for (const item of targetBatches) {
+      const column = findColumn(
+        item.batch,
+        experimentColumnWords,
+        "status"
+      );
 
       if (!column) {
         continue;
       }
 
-      for (
-        const student of batch.students
-      ) {
-        const value = Number(
-          student.values?.[
-            column.id
-          ]
+      for (const student of item.batch.students) {
+        const submitted = isSubmitted(
+          student.values?.[column.id]
         );
 
         if (
-          !Number.isFinite(value)
+          (asksPending && !submitted) ||
+          (asksSubmitted && submitted)
         ) {
-          continue;
-        }
-
-        if (
-          (isBelow &&
-            value < limit) ||
-          (!isBelow &&
-            value > limit)
-        ) {
-          results.push(
-            `${student.rollNo || "-"} - ${
-              student.name || "Unnamed"
-            } (${value})`
+          names.push(
+            `${student.name} (${item.batch.name})`
           );
         }
       }
     }
 
-    if (!results.length) {
-      return "No matching students were found.";
+    if (!names.length) {
+      return asksPending
+        ? "No pending experiment files found."
+        : "No submitted experiment files found.";
     }
 
-    return results.join("\n");
+    return asksPending
+      ? `Pending experiment files: ${names.join(", ")}.`
+      : `Students who submitted the experiment file: ${names.join(", ")}.`;
   }
 
-  // ====================================================
-  // EXPERIMENT / ASSIGNMENT STATUS
-  // ====================================================
+  // ----------------------------------------------------
+  // PENDING / SUBMITTED ASSIGNMENTS
+  // ----------------------------------------------------
 
   if (
-    isExperiment ||
-    isAssignment ||
-    isDoneWord ||
-    isPending
+    asksAssignment &&
+    (asksPending || asksSubmitted)
   ) {
-    const useAssignment =
-      isAssignment &&
-      !isExperiment;
+    const names = [];
 
-    const words = useAssignment
-      ? [
-          "assignment",
-          "assignments",
-          "assign"
-        ]
-      : [
-          "experiment",
-          "experiments",
-          "exp",
-          "file"
-        ];
-
-    const results = [];
-
-    for (
-      const { batch } of targetBatches
-    ) {
-      const column =
-        findColumn(
-          batch,
-          words,
-          "status"
-        );
+    for (const item of targetBatches) {
+      const column = findColumn(
+        item.batch,
+        assignmentColumnWords,
+        "status"
+      );
 
       if (!column) {
         continue;
       }
 
-      for (
-        const student of batch.students
-      ) {
-        const value =
-          student.values?.[
-            column.id
-          ];
+      for (const student of item.batch.students) {
+        const submitted = isSubmitted(
+          student.values?.[column.id]
+        );
 
         if (
-          isPending &&
-          isPendingValue(value)
+          (asksPending && !submitted) ||
+          (asksSubmitted && submitted)
         ) {
-          results.push({
-            batch: batch.name,
-            student
-          });
-        }
-
-        if (
-          (
-            isSubmittedQuestion ||
-            isDoneWord
-          ) &&
-          isSubmitted(value)
-        ) {
-          results.push({
-            batch: batch.name,
-            student
-          });
+          names.push(
+            `${student.name} (${item.batch.name})`
+          );
         }
       }
     }
 
-    const typeName =
-      useAssignment
-        ? "assignment"
-        : "experiment file";
+    if (!names.length) {
+      return asksPending
+        ? "No pending assignments found."
+        : "No submitted assignments found.";
+    }
+
+    return asksPending
+      ? `Pending assignments: ${names.join(", ")}.`
+      : `Students who submitted the assignment: ${names.join(", ")}.`;
+  }
+
+  // ----------------------------------------------------
+  // MARKS BELOW A NUMBER
+  // ----------------------------------------------------
+
+  const belowMatch = q.match(
+    /(?:below|less than|under)\s+(\d+)/
+  );
+
+  if (
+    belowMatch &&
+    q.includes("mark")
+  ) {
+    const limit = Number(
+      belowMatch[1]
+    );
+
+    const results = [];
+
+    for (const item of targetBatches) {
+      for (const column of item.batch.columns) {
+        if (
+          column.type !== "number" ||
+          !normalizeQuestion(
+            column.label
+          ).includes("mark")
+        ) {
+          continue;
+        }
+
+        for (const student of item.batch.students) {
+          const value = Number(
+            student.values?.[column.id]
+          );
+
+          if (
+            Number.isFinite(value) &&
+            value < limit
+          ) {
+            results.push(
+              `${student.name} (${value})`
+            );
+          }
+        }
+      }
+    }
 
     if (!results.length) {
-      return `No matching ${typeName} records were found.`;
+      return `No students found with marks below ${limit}.`;
     }
 
-    if (
-      q.includes("how many") ||
-      q.includes("count") ||
-      q.includes("number of")
-    ) {
-      if (isPending) {
-        return `${results.length} student(s) have not submitted the ${typeName}.`;
-      }
-
-      return `${results.length} student(s) have submitted the ${typeName}.`;
-    }
-
-    const names =
-      results.map(
-        (item) =>
-          `${item.student.rollNo || "-"} - ${
-            item.student.name || "Unnamed"
-          }`
-      );
-
-    if (isPending) {
-      return `Pending ${typeName}:\n${names.join(
-        "\n"
-      )}`;
-    }
-
-    return `Submitted ${typeName}:\n${names.join(
-      "\n"
-    )}`;
+    return `Students with marks below ${limit}: ${results.join(", ")}.`;
   }
 
-  // ====================================================
-  // STUDENT COUNT
-  // ====================================================
+  // ----------------------------------------------------
+  // LIST STUDENTS
+  // ----------------------------------------------------
 
   if (
-    q.includes("how many students") ||
-    q.includes("number of students") ||
-    q.includes("student count") ||
-    q.includes("how many student")
+    q.includes("show") &&
+    q.includes("student")
   ) {
-    const count =
-      targetBatches.reduce(
-        (total, item) =>
-          total +
-          item.batch.students.length,
-        0
-      );
-
-    return `There are ${count} student(s) in the selected batch/lab.`;
-  }
-
-  // ====================================================
-  // SHOW / LIST STUDENTS
-  // ====================================================
-
-  if (
-    q.includes("show students") ||
-    q.includes("list students") ||
-    q.includes("students in") ||
-    q.includes("who are the students") ||
-    q.includes("show i1 students") ||
-    q.includes("show i2 students") ||
-    q.includes("show i3 students") ||
-    q.includes("list i1 students") ||
-    q.includes("list i2 students") ||
-    q.includes("list i3 students") ||
-    q.endsWith(" students")
-  ) {
-    const students =
-      targetBatches.flatMap(
-        ({ batch }) =>
-          batch.students.map(
-            (student) =>
-              `${student.rollNo || "-"} - ${
-                student.name || "Unnamed"
-              }`
-          )
-      );
+    const students = targetBatches.flatMap(
+      (item) =>
+        item.batch.students.map(
+          (student) =>
+            `${student.name} (${item.batch.name})`
+        )
+    );
 
     if (!students.length) {
       return "There are no students in the selected batch.";
     }
 
-    return students.join("\n");
+    return `Students: ${students.join(", ")}.`;
   }
 
-  // ====================================================
-  // OUTSIDE SCOPE
-  // ====================================================
-
-  return "I can only answer questions about your labs, batches, students, experiment files, assignments and marks.";
+  return "I can answer questions about your labs, batches, students, experiment files, assignments and marks. Try: “I2 pending experiment files” or “How many students are in I2?”";
 }
-
-// ======================================================
-// CHAT API
-// ======================================================
 
 app.post(
   "/api/chat",
+  requireTeacher,
   async (req, res) => {
     try {
-      const { question } =
-        req.body;
+      const question = String(
+        req.body.question || ""
+      ).trim();
 
-      if (
-        !question ||
-        !question.trim()
-      ) {
+      if (!question) {
         return res.status(400).json({
-          message:
-            "Question is required"
+          message: "Question is required"
         });
       }
 
-      const answer =
-        await answerLabBot(
-          question
-        );
+      const answer = await answerLabBot(
+        question,
+        req.teacher._id
+      );
 
       res.json({
         answer
       });
     } catch (error) {
-      console.error(error);
+      console.error("CHAT ERROR:", error);
 
       res.status(500).json({
-        message:
-          "LabBot could not process the question"
+        message: "Failed to answer question"
       });
     }
   }
 );
 
 // ======================================================
-// DATABASE + SERVER
+// DATABASE
 // ======================================================
 
-mongoose
-  .connect(
-    process.env.MONGODB_URI,
-    {
-      dbName: "collegeDB"
+async function startServer() {
+  try {
+    if (!process.env.MONGODB_URI) {
+      throw new Error(
+        "MONGODB_URI is missing in backend/.env"
+      );
     }
-  )
-  .then(() => {
-    console.log(
-      "MongoDB connected"
-    );
 
-    app.listen(
-      PORT,
-      "0.0.0.0",
-      () => {
-        console.log(
-          `Backend running on port ${PORT}`
-        );
+    await mongoose.connect(
+      process.env.MONGODB_URI,
+      {
+        dbName: "collegeDB"
       }
     );
-  })
-  .catch((error) => {
+
+    console.log("MongoDB connected");
+
+    app.listen(PORT, () => {
+      console.log(
+        `Backend running on port ${PORT}`
+      );
+    });
+  } catch (error) {
     console.error(
       "MongoDB connection failed:",
-      error
+      error.message
     );
 
     process.exit(1);
-  });
+  }
+}
+
+startServer();

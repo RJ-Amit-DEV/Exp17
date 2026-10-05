@@ -1,198 +1,355 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState
+} from "react";
+
 import "./App.css";
 
 const API =
   import.meta.env.VITE_API_URL ||
-  "https://exp17.onrender.com/api";
+  "http://localhost:3000/api";
 
-const makeId = () => crypto.randomUUID();
+const makeId = () =>
+  crypto.randomUUID();
 
-const helpExamples = [
-  "Show I2 students",
-  "In I2 which student completed the experiment file?",
-  "I2 pending experiment files",
-  "Who submitted assignment in I3?",
-  "How many students are in I2?",
-  "I1 students with experiment marks below 5",
-  "Who has pending assignments in I1?",
-  "What is Amit's total marks?"
-];
+function apiFetch(url, options = {}) {
+  const token =
+    localStorage.getItem("teacherToken");
 
-function normalizeColumns(columns) {
-  if (!Array.isArray(columns)) {
-    return [];
+  const headers = {
+    ...(options.headers || {})
+  };
+
+  if (token) {
+    headers["x-teacher-token"] = token;
   }
 
-  return columns.map((column) => {
-    const label = String(column.label || "")
-      .toLowerCase()
-      .trim();
-
-    if (label === "experiments file") {
-      return {
-        ...column,
-        label: "Experiments File",
-        type: "status",
-        maxMarks: 0,
-        builtIn: true
-      };
-    }
-
-    if (
-      label === "experiment marks" ||
-      label === "experiment mark"
-    ) {
-      return {
-        ...column,
-        label: "Experiment Marks",
-        type: "number",
-        maxMarks: 20,
-        builtIn: true
-      };
-    }
-
-    if (
-      label === "assignments" ||
-      label === "assignment"
-    ) {
-      return {
-        ...column,
-        label: "Assignments",
-        type: "status",
-        maxMarks: 0,
-        builtIn: true
-      };
-    }
-
-    if (
-      label === "assignment marks" ||
-      label === "assignment mark"
-    ) {
-      return {
-        ...column,
-        label: "Assignment Marks",
-        type: "number",
-        maxMarks: 10,
-        builtIn: true
-      };
-    }
-
-    return {
-      ...column,
-      builtIn: Boolean(column.builtIn)
-    };
+  return fetch(url, {
+    ...options,
+    headers
   });
 }
 
-function normalizeLabs(data) {
-  if (!Array.isArray(data)) {
-    return [];
+const defaultColumns = () => [
+  {
+    id: makeId(),
+    label: "Experiments File",
+    type: "status",
+    maxMarks: 0
+  },
+  {
+    id: makeId(),
+    label: "Experiment Marks",
+    type: "number",
+    maxMarks: 20
+  },
+  {
+    id: makeId(),
+    label: "Assignments",
+    type: "status",
+    maxMarks: 0
+  },
+  {
+    id: makeId(),
+    label: "Assignment Marks",
+    type: "number",
+    maxMarks: 10
   }
-
-  return data.map((lab) => ({
-    ...lab,
-    batches: Array.isArray(lab.batches)
-      ? lab.batches.map((batch) => ({
-          ...batch,
-          columns: normalizeColumns(batch.columns),
-          students: Array.isArray(batch.students)
-            ? batch.students
-            : []
-        }))
-      : []
-  }));
-}
+];
 
 function App() {
-  const [labs, setLabs] = useState([]);
+  // ====================================================
+  // AUTH
+  // ====================================================
+
+  const [teacher, setTeacher] =
+    useState(null);
+
+  const [teacherName, setTeacherName] =
+    useState("");
+
+  const [teacherDraft, setTeacherDraft] =
+    useState("");
+
+  const [accessCode, setAccessCode] =
+    useState("");
+
+  const [authLoading, setAuthLoading] =
+    useState(true);
+
+  const [authError, setAuthError] =
+    useState("");
+
+  const [showAuth, setShowAuth] =
+    useState(false);
+
+  const [editingTeacher, setEditingTeacher] =
+    useState(false);
+
+  // ====================================================
+  // LAB
+  // ====================================================
+
+  const [labs, setLabs] =
+    useState([]);
+
   const [selectedLabId, setSelectedLabId] =
     useState("");
+
   const [activeBatchId, setActiveBatchId] =
     useState("");
 
-  const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] =
+    useState(true);
 
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [saveError, setSaveError] = useState("");
+  const [search, setSearch] =
+    useState("");
 
-  const [showLabForm, setShowLabForm] = useState(false);
+  const [saving, setSaving] =
+    useState(false);
+
+  const [saved, setSaved] =
+    useState(false);
+
+  // ====================================================
+  // FORMS
+  // ====================================================
+
+  const [showLabForm, setShowLabForm] =
+    useState(false);
+
   const [showBatchForm, setShowBatchForm] =
     useState(false);
+
   const [showColumnForm, setShowColumnForm] =
     useState(false);
 
-  const [showBotHelp, setShowBotHelp] = useState(false);
+  const [labName, setLabName] =
+    useState("");
 
-  const [labName, setLabName] = useState("");
   const [subjectName, setSubjectName] =
     useState("");
-  const [batchName, setBatchName] = useState("");
 
-  const [columnName, setColumnName] = useState("");
+  const [batchName, setBatchName] =
+    useState("");
+
+  const [columnName, setColumnName] =
+    useState("");
+
   const [columnType, setColumnType] =
     useState("status");
+
   const [columnMarks, setColumnMarks] =
     useState("");
 
-  const [chatOpen, setChatOpen] = useState(false);
-  const [question, setQuestion] = useState("");
+  // ====================================================
+  // BOT
+  // ====================================================
+
+  const [chatOpen, setChatOpen] =
+    useState(false);
+
+  const [showBotHelp, setShowBotHelp] =
+    useState(false);
+
+  const [question, setQuestion] =
+    useState("");
+
+  const [chatLoading, setChatLoading] =
+    useState(false);
 
   const [chatMessages, setChatMessages] =
     useState([
       {
         role: "bot",
         text:
-          "Hi! I'm LabBot. Ask me about students, pending work, assignments, batches or marks."
+          "Hi! Ask me about your students, pending experiment files, assignments or marks."
       }
     ]);
 
-  const [chatLoading, setChatLoading] =
-    useState(false);
+  // ====================================================
+  // AUTH CHECK
+  // ====================================================
 
-  // =====================================================
-  // TEACHER NAME
-  // =====================================================
+  useEffect(() => {
+    async function checkSession() {
+      const token =
+        localStorage.getItem(
+          "teacherToken"
+        );
 
-  const [teacherName, setTeacherName] = useState(
-    localStorage.getItem("teacherName") || ""
-  );
+      if (!token) {
+        setAuthLoading(false);
+        setShowAuth(true);
+        return;
+      }
 
-  const [showTeacherForm, setShowTeacherForm] =
-    useState(
-      !localStorage.getItem("teacherName")
-    );
+      try {
+        const response = await apiFetch(
+          `${API}/auth/me`
+        );
 
-  const saveTeacherName = (event) => {
+        if (!response.ok) {
+          throw new Error("Invalid session");
+        }
+
+        const data =
+          await response.json();
+
+        setTeacher(data.teacher);
+        setTeacherName(
+          data.teacher.name
+        );
+        setTeacherDraft(
+          data.teacher.name
+        );
+        setShowAuth(false);
+      } catch {
+        localStorage.removeItem(
+          "teacherToken"
+        );
+
+        localStorage.removeItem(
+          "teacherName"
+        );
+
+        setTeacher(null);
+        setShowAuth(true);
+      } finally {
+        setAuthLoading(false);
+      }
+    }
+
+    checkSession();
+  }, []);
+
+  // ====================================================
+  // LOGIN
+  // ====================================================
+
+  async function handleLogin(event) {
     event.preventDefault();
 
-    const name = teacherName.trim();
+    setAuthError("");
+
+    const name =
+      teacherDraft.trim();
+
+    const code =
+      accessCode.trim();
 
     if (!name) {
+      setAuthError(
+        "Please enter your teacher name."
+      );
       return;
     }
 
-    localStorage.setItem(
-      "teacherName",
-      name
+    if (!/^\d{4}$/.test(code)) {
+      setAuthError(
+        "Access code must contain exactly 4 digits."
+      );
+      return;
+    }
+
+    try {
+      setAuthLoading(true);
+
+      const response = await fetch(
+        `${API}/auth/login`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json"
+          },
+          body: JSON.stringify({
+            name,
+            code
+          })
+        }
+      );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.message ||
+            "Login failed"
+        );
+      }
+
+      localStorage.setItem(
+        "teacherToken",
+        data.token
+      );
+
+      localStorage.setItem(
+        "teacherName",
+        data.teacher.name
+      );
+
+      setTeacher(data.teacher);
+      setTeacherName(
+        data.teacher.name
+      );
+      setTeacherDraft(
+        data.teacher.name
+      );
+      setAccessCode("");
+      setShowAuth(false);
+      setAuthError("");
+    } catch (error) {
+      setAuthError(
+        error.message ||
+          "Login failed"
+      );
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  // ====================================================
+  // LOGOUT
+  // ====================================================
+
+  function logout() {
+    localStorage.removeItem(
+      "teacherToken"
     );
 
-    setTeacherName(name);
-    setShowTeacherForm(false);
-  };
+    localStorage.removeItem(
+      "teacherName"
+    );
 
-  // =====================================================
+    setTeacher(null);
+    setTeacherName("");
+    setTeacherDraft("");
+    setLabs([]);
+    setSelectedLabId("");
+    setActiveBatchId("");
+    setShowAuth(true);
+  }
+
+  // ====================================================
   // LOAD LABS
-  // =====================================================
+  // ====================================================
 
-  const loadLabs = async () => {
+  async function loadLabs() {
     try {
       setLoading(true);
 
-      const response = await fetch(
-        `${API}/labs`
-      );
+      const response =
+        await apiFetch(
+          `${API}/labs`
+        );
+
+      if (response.status === 401) {
+        logout();
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(
@@ -200,18 +357,15 @@ function App() {
         );
       }
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
-      const normalized = normalizeLabs(data);
+      setLabs(data);
 
-      setLabs(normalized);
-
-      if (
-        normalized.length &&
-        !selectedLabId
-      ) {
+      if (data.length) {
         setSelectedLabId(
-          normalized[0]._id
+          (current) =>
+            current || data[0]._id
         );
       }
     } catch (error) {
@@ -219,153 +373,180 @@ function App() {
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   useEffect(() => {
-    loadLabs();
-  }, []);
+    if (teacher) {
+      loadLabs();
+    }
+  }, [teacher]);
 
-  // =====================================================
+  // ====================================================
   // CURRENT LAB / BATCH
-  // =====================================================
+  // ====================================================
 
-  const selectedLab = labs.find(
-    (lab) => lab._id === selectedLabId
-  );
+  const selectedLab =
+    labs.find(
+      (lab) =>
+        lab._id === selectedLabId
+    );
 
   const activeBatch =
     selectedLab?.batches?.find(
-      (batch) => batch.id === activeBatchId
+      (batch) =>
+        batch.id === activeBatchId
     );
 
   useEffect(() => {
     if (
       selectedLab?.batches?.length &&
       !selectedLab.batches.some(
-        (batch) => batch.id === activeBatchId
+        (batch) =>
+          batch.id ===
+          activeBatchId
       )
     ) {
       setActiveBatchId(
         selectedLab.batches[0].id
       );
     }
+  }, [
+    selectedLab,
+    activeBatchId
+  ]);
 
-    if (!selectedLab?.batches?.length) {
-      setActiveBatchId("");
-    }
-  }, [selectedLab, activeBatchId]);
-
-  // =====================================================
+  // ====================================================
   // SEARCH
-  // =====================================================
+  // ====================================================
 
-  const visibleStudents = useMemo(() => {
-    if (!activeBatch) {
-      return [];
-    }
+  const visibleStudents =
+    useMemo(() => {
+      if (!activeBatch) {
+        return [];
+      }
 
-    const query = search.toLowerCase().trim();
-
-    if (!query) {
-      return activeBatch.students;
-    }
-
-    return activeBatch.students.filter(
-      (student) =>
-        `${student.name || ""} ${
-          student.rollNo || ""
-        }`
+      const q =
+        search
           .toLowerCase()
-          .includes(query)
-    );
-  }, [activeBatch, search]);
+          .trim();
 
-  // =====================================================
-  // CREATE LAB
-  // =====================================================
+      if (!q) {
+        return activeBatch.students;
+      }
 
-  const createLab = async (event) => {
+      return activeBatch.students.filter(
+        (student) =>
+          String(
+            student.name || ""
+          )
+            .toLowerCase()
+            .includes(q) ||
+          String(
+            student.rollNo || ""
+          )
+            .toLowerCase()
+            .includes(q)
+      );
+    }, [activeBatch, search]);
+
+  // ====================================================
+  // LAB
+  // ====================================================
+
+  async function createLab(event) {
     event.preventDefault();
 
-    if (!labName.trim()) {
-      return;
-    }
+    if (!labName.trim()) return;
 
     try {
-      const response = await fetch(
-        `${API}/labs`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            name: labName.trim(),
-            subject: subjectName.trim()
-          })
-        }
-      );
+      const response =
+        await apiFetch(
+          `${API}/labs`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json"
+            },
+            body: JSON.stringify({
+              name: labName,
+              subject:
+                subjectName
+            })
+          }
+        );
+
+      if (response.status === 401) {
+        logout();
+        return;
+      }
+
+      const newLab =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
-          "Failed to create lab"
+          newLab.message ||
+            "Failed to create lab"
         );
       }
-
-      const newLab = await response.json();
 
       setLabs((current) => [
         newLab,
         ...current
       ]);
 
-      setSelectedLabId(newLab._id);
+      setSelectedLabId(
+        newLab._id
+      );
+
       setActiveBatchId("");
 
       setLabName("");
       setSubjectName("");
       setShowLabForm(false);
     } catch (error) {
-      console.error(error);
-      alert("Could not create lab.");
+      alert(error.message);
     }
-  };
+  }
 
-  // =====================================================
-  // DELETE LAB
-  // =====================================================
+  async function deleteLab() {
+    if (!selectedLab) return;
 
-  const deleteLab = async () => {
-    if (!selectedLab) {
-      return;
-    }
-
-    const ok = window.confirm(
-      `Delete "${selectedLab.name}" and all its batches?`
-    );
-
-    if (!ok) {
+    if (
+      !window.confirm(
+        `Delete "${selectedLab.name}" and all its batches?`
+      )
+    ) {
       return;
     }
 
     try {
-      const response = await fetch(
-        `${API}/labs/${selectedLab._id}`,
-        {
-          method: "DELETE"
-        }
-      );
+      const response =
+        await apiFetch(
+          `${API}/labs/${selectedLab._id}`,
+          {
+            method: "DELETE"
+          }
+        );
+
+      if (response.status === 401) {
+        logout();
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(
-          "Delete failed"
+          "Failed to delete lab"
         );
       }
 
-      const remaining = labs.filter(
-        (lab) =>
-          lab._id !== selectedLab._id
-      );
+      const remaining =
+        labs.filter(
+          (lab) =>
+            lab._id !==
+            selectedLab._id
+        );
 
       setLabs(remaining);
 
@@ -375,16 +556,79 @@ function App() {
 
       setActiveBatchId("");
     } catch (error) {
-      console.error(error);
-      alert("Could not delete lab.");
+      alert(error.message);
     }
-  };
+  }
 
-  // =====================================================
-  // CREATE BATCH
-  // =====================================================
+  async function renameLab() {
+    if (!selectedLab) return;
 
-  const createBatch = async (event) => {
+    const newName =
+      window.prompt(
+        "Lab name:",
+        selectedLab.name
+      );
+
+    if (!newName?.trim()) {
+      return;
+    }
+
+    const newSubject =
+      window.prompt(
+        "Subject:",
+        selectedLab.subject || ""
+      );
+
+    try {
+      const response =
+        await apiFetch(
+          `${API}/labs/${selectedLab._id}`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type":
+                "application/json"
+            },
+            body: JSON.stringify({
+              name: newName,
+              subject:
+                newSubject || ""
+            })
+          }
+        );
+
+      if (response.status === 401) {
+        logout();
+        return;
+      }
+
+      const updated =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          updated.message ||
+            "Failed to update lab"
+        );
+      }
+
+      setLabs((current) =>
+        current.map((lab) =>
+          lab._id === updated._id
+            ? updated
+            : lab
+        )
+      );
+    } catch (error) {
+      alert(error.message);
+    }
+  }
+
+  // ====================================================
+  // BATCH
+  // ====================================================
+
+  async function createBatch(event) {
     event.preventDefault();
 
     if (
@@ -395,30 +639,40 @@ function App() {
     }
 
     try {
-      const response = await fetch(
-        `${API}/labs/${selectedLab._id}/batches`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            name: batchName.trim()
-          })
-        }
-      );
+      const response =
+        await apiFetch(
+          `${API}/labs/${selectedLab._id}/batches`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json"
+            },
+            body: JSON.stringify({
+              name: batchName
+            })
+          }
+        );
+
+      if (response.status === 401) {
+        logout();
+        return;
+      }
+
+      const newBatch =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
-          "Failed to create batch"
+          newBatch.message ||
+            "Failed to create batch"
         );
       }
 
-      const newBatch = await response.json();
-
       setLabs((current) =>
         current.map((lab) =>
-          lab._id === selectedLab._id
+          lab._id ===
+          selectedLab._id
             ? {
                 ...lab,
                 batches: [
@@ -430,21 +684,18 @@ function App() {
         )
       );
 
-      setActiveBatchId(newBatch.id);
+      setActiveBatchId(
+        newBatch.id
+      );
 
       setBatchName("");
       setShowBatchForm(false);
     } catch (error) {
-      console.error(error);
-      alert("Could not create batch.");
+      alert(error.message);
     }
-  };
+  }
 
-  // =====================================================
-  // DELETE BATCH
-  // =====================================================
-
-  const deleteBatch = async () => {
+  async function deleteBatch() {
     if (
       !selectedLab ||
       !activeBatch
@@ -452,31 +703,38 @@ function App() {
       return;
     }
 
-    const ok = window.confirm(
-      `Delete batch "${activeBatch.name}"?`
-    );
-
-    if (!ok) {
+    if (
+      !window.confirm(
+        `Delete batch "${activeBatch.name}"?`
+      )
+    ) {
       return;
     }
 
     try {
-      const response = await fetch(
-        `${API}/labs/${selectedLab._id}/batches/${activeBatch.id}`,
-        {
-          method: "DELETE"
-        }
-      );
+      const response =
+        await apiFetch(
+          `${API}/labs/${selectedLab._id}/batches/${activeBatch.id}`,
+          {
+            method: "DELETE"
+          }
+        );
+
+      if (response.status === 401) {
+        logout();
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(
-          "Delete failed"
+          "Failed to delete batch"
         );
       }
 
       setLabs((current) =>
         current.map((lab) =>
-          lab._id === selectedLab._id
+          lab._id ===
+          selectedLab._id
             ? {
                 ...lab,
                 batches:
@@ -492,16 +750,15 @@ function App() {
 
       setActiveBatchId("");
     } catch (error) {
-      console.error(error);
-      alert("Could not delete batch.");
+      alert(error.message);
     }
-  };
+  }
 
-  // =====================================================
-  // UPDATE BATCH
-  // =====================================================
+  // ====================================================
+  // LOCAL BATCH EDITING
+  // ====================================================
 
-  const updateBatch = (changes) => {
+  function updateBatch(changes) {
     if (
       !selectedLab ||
       !activeBatch
@@ -510,11 +767,11 @@ function App() {
     }
 
     setSaved(false);
-    setSaveError("");
 
     setLabs((current) =>
       current.map((lab) =>
-        lab._id !== selectedLab._id
+        lab._id !==
+        selectedLab._id
           ? lab
           : {
               ...lab,
@@ -532,21 +789,18 @@ function App() {
             }
       )
     );
-  };
+  }
 
-  // =====================================================
-  // UPDATE STUDENT
-  // =====================================================
-
-  const updateStudent = (
+  function updateStudent(
     studentId,
     changes
-  ) => {
+  ) {
     updateBatch({
       students:
         activeBatch.students.map(
           (student) =>
-            student.id === studentId
+            student.id ===
+            studentId
               ? {
                   ...student,
                   ...changes
@@ -554,50 +808,20 @@ function App() {
               : student
         )
     });
-  };
+  }
 
-  const updateStudentValue = (
+  function updateStudentValue(
     studentId,
     columnId,
     value
-  ) => {
+  ) {
     const student =
       activeBatch.students.find(
         (item) =>
           item.id === studentId
       );
 
-    if (!student) {
-      return;
-    }
-
-    const column =
-      activeBatch.columns.find(
-        (item) =>
-          item.id === columnId
-      );
-
-    if (
-      column?.type === "number" &&
-      value !== ""
-    ) {
-      const number = Number(value);
-
-      if (
-        Number.isFinite(number) &&
-        number < 0
-      ) {
-        return;
-      }
-
-      if (
-        Number.isFinite(number) &&
-        column.maxMarks > 0 &&
-        number > column.maxMarks
-      ) {
-        return;
-      }
-    }
+    if (!student) return;
 
     updateStudent(
       studentId,
@@ -608,77 +832,63 @@ function App() {
         }
       }
     );
-  };
+  }
 
-  // =====================================================
-  // ADD STUDENT
-  // =====================================================
-
-  const addStudent = () => {
-    const student = {
-      id: makeId(),
-      rollNo: "",
-      name: "",
-      age: "",
-      values: {}
-    };
+  function addStudent() {
+    if (!activeBatch) return;
 
     updateBatch({
       students: [
         ...activeBatch.students,
-        student
+        {
+          id: makeId(),
+          rollNo: "",
+          name: "",
+          age: "",
+          values: {}
+        }
       ]
     });
-  };
+  }
 
-  // =====================================================
-  // DELETE STUDENT
-  // =====================================================
-
-  const deleteStudent = (
+  function deleteStudent(
     studentId
-  ) => {
+  ) {
     updateBatch({
       students:
         activeBatch.students.filter(
           (student) =>
-            student.id !== studentId
+            student.id !==
+            studentId
         )
     });
-  };
+  }
 
-  // =====================================================
-  // ADD CUSTOM COLUMN
-  // =====================================================
+  // ====================================================
+  // COLUMNS
+  // ====================================================
 
-  const addColumn = (event) => {
+  function addColumn(event) {
     event.preventDefault();
 
-    if (!columnName.trim()) {
-      return;
-    }
-
     if (
-      columnType === "number" &&
-      (!columnMarks ||
-        Number(columnMarks) <= 0)
+      !activeBatch ||
+      !columnName.trim()
     ) {
-      alert(
-        "Enter a valid maximum mark."
-      );
-
       return;
     }
 
     const column = {
       id: makeId(),
-      label: columnName.trim(),
+      label:
+        columnName.trim(),
       type: columnType,
       maxMarks:
         columnType === "number"
-          ? Number(columnMarks)
-          : 0,
-      builtIn: false
+          ? Number(
+              columnMarks
+            ) || 0
+          : 0
     };
 
     updateBatch({
@@ -692,75 +902,42 @@ function App() {
     setColumnType("status");
     setColumnMarks("");
     setShowColumnForm(false);
-  };
+  }
 
-  // =====================================================
-  // DELETE CUSTOM COLUMN
-  // =====================================================
-
-  const deleteColumn = (
+  function deleteColumn(
     columnId
-  ) => {
+  ) {
+    if (!activeBatch) return;
+
     const column =
       activeBatch.columns.find(
         (item) =>
           item.id === columnId
       );
 
-    if (!column) {
+    if (!column) return;
+
+    if (
+      !window.confirm(
+        `Delete column "${column.label}"?`
+      )
+    ) {
       return;
     }
-
-    if (column.builtIn) {
-      alert(
-        "Default columns cannot be deleted."
-      );
-
-      return;
-    }
-
-    const ok = window.confirm(
-      `Delete custom column "${column.label}"?`
-    );
-
-    if (!ok) {
-      return;
-    }
-
-    const updatedStudents =
-      activeBatch.students.map(
-        (student) => {
-          const values = {
-            ...(student.values || {})
-          };
-
-          delete values[columnId];
-
-          return {
-            ...student,
-            values
-          };
-        }
-      );
 
     updateBatch({
       columns:
         activeBatch.columns.filter(
           (item) =>
             item.id !== columnId
-        ),
-      students: updatedStudents
+        )
     });
-  };
+  }
 
-  // =====================================================
-  // UPDATE COLUMN
-  // =====================================================
-
-  const updateColumn = (
+  function updateColumn(
     columnId,
     changes
-  ) => {
+  ) {
     updateBatch({
       columns:
         activeBatch.columns.map(
@@ -773,13 +950,13 @@ function App() {
               : column
         )
     });
-  };
+  }
 
-  // =====================================================
+  // ====================================================
   // SAVE BATCH
-  // =====================================================
+  // ====================================================
 
-  const saveBatch = async () => {
+  async function saveBatch() {
     if (
       !selectedLab ||
       !activeBatch
@@ -790,46 +967,41 @@ function App() {
     try {
       setSaving(true);
       setSaved(false);
-      setSaveError("");
 
-      const response = await fetch(
-        `${API}/labs/${selectedLab._id}/batches/${activeBatch.id}`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type":
-              "application/json"
-          },
-          body: JSON.stringify({
-            ...activeBatch,
-            columns:
-              normalizeColumns(
-                activeBatch.columns
-              )
-          })
-        }
-      );
+      const response =
+        await apiFetch(
+          `${API}/labs/${selectedLab._id}/batches/${activeBatch.id}`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type":
+                "application/json"
+            },
+            body: JSON.stringify(
+              activeBatch
+            )
+          }
+        );
 
-      const data = await response.json();
+      if (response.status === 401) {
+        logout();
+        return;
+      }
+
+      const savedBatch =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
-          data.message ||
+          savedBatch.message ||
             "Save failed"
         );
       }
 
-      const savedBatch = {
-        ...data,
-        columns:
-          normalizeColumns(
-            data.columns
-          )
-      };
-
       setLabs((current) =>
         current.map((lab) =>
-          lab._id !== selectedLab._id
+          lab._id !==
+          selectedLab._id
             ? lab
             : {
                 ...lab,
@@ -847,24 +1019,17 @@ function App() {
 
       setSaved(true);
     } catch (error) {
-      console.error(error);
-
-      setSaved(false);
-
-      setSaveError(
-        error.message ||
-          "Could not save batch."
-      );
+      alert(error.message);
     } finally {
       setSaving(false);
     }
-  };
+  }
 
-  // =====================================================
+  // ====================================================
   // TOTAL
-  // =====================================================
+  // ====================================================
 
-  const getTotal = (student) => {
+  function getTotal(student) {
     if (!activeBatch) {
       return 0;
     }
@@ -884,57 +1049,131 @@ function App() {
 
           return (
             total +
-            (Number.isFinite(value)
+            (Number.isFinite(
+              value
+            )
               ? value
               : 0)
           );
         },
         0
       );
-  };
+  }
 
-  // =====================================================
-  // LABBOT
-  // =====================================================
+  // ====================================================
+  // TEACHER NAME
+  // ====================================================
 
-  const askBot = async (event) => {
+  async function saveTeacherName(
+    event
+  ) {
     event.preventDefault();
 
-    if (!question.trim()) {
+    const name =
+      teacherDraft.trim();
+
+    if (!name) return;
+
+    try {
+      const response =
+        await apiFetch(
+          `${API}/teacher/name`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type":
+                "application/json"
+            },
+            body: JSON.stringify({
+              newTeacherName:
+                name
+            })
+          }
+        );
+
+      if (response.status === 401) {
+        logout();
+        return;
+      }
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.message ||
+            "Could not update teacher name"
+        );
+      }
+
+      localStorage.setItem(
+        "teacherName",
+        data.teacher.name
+      );
+
+      setTeacher(data.teacher);
+      setTeacherName(
+        data.teacher.name
+      );
+      setTeacherDraft(
+        data.teacher.name
+      );
+      setEditingTeacher(false);
+    } catch (error) {
+      alert(error.message);
+    }
+  }
+
+  // ====================================================
+  // LABBOT
+  // ====================================================
+
+  async function askBot(event) {
+    event.preventDefault();
+
+    const q =
+      question.trim();
+
+    if (!q || chatLoading) {
       return;
     }
 
-    const currentQuestion =
-      question.trim();
-
-    setChatMessages((messages) => [
-      ...messages,
-      {
-        role: "user",
-        text: currentQuestion
-      }
-    ]);
+    setChatMessages(
+      (current) => [
+        ...current,
+        {
+          role: "user",
+          text: q
+        }
+      ]
+    );
 
     setQuestion("");
     setChatLoading(true);
 
     try {
-      const response = await fetch(
-        `${API}/chat`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type":
-              "application/json"
-          },
-          body: JSON.stringify({
-            question:
-              currentQuestion
-          })
-        }
-      );
+      const response =
+        await apiFetch(
+          `${API}/chat`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json"
+            },
+            body: JSON.stringify({
+              question: q
+            })
+          }
+        );
 
-      const data = await response.json();
+      if (response.status === 401) {
+        logout();
+        return;
+      }
+
+      const data =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
@@ -943,941 +1182,779 @@ function App() {
         );
       }
 
-      setChatMessages((messages) => [
-        ...messages,
-        {
-          role: "bot",
-          text:
-            data.answer ||
-            "I could not find an answer."
-        }
-      ]);
+      setChatMessages(
+        (current) => [
+          ...current,
+          {
+            role: "bot",
+            text: data.answer
+          }
+        ]
+      );
     } catch (error) {
-      console.error(error);
-
-      setChatMessages((messages) => [
-        ...messages,
-        {
-          role: "bot",
-          text:
-            "Sorry, I could not connect to the server."
-        }
-      ]);
+      setChatMessages(
+        (current) => [
+          ...current,
+          {
+            role: "bot",
+            text:
+              error.message ||
+              "Sorry, I could not answer that."
+          }
+        ]
+      );
     } finally {
       setChatLoading(false);
     }
-  };
+  }
 
-  // =====================================================
-  // LOADING
-  // =====================================================
+  // ====================================================
+  // AUTH SCREEN
+  // ====================================================
 
-  if (loading) {
+  if (authLoading) {
     return (
-      <div className="loading-screen">
-        Loading Lab Management...
+      <div className="auth-screen">
+        <div className="auth-card">
+          <div className="auth-icon">
+            🔐
+          </div>
+
+          <h1>Exp17</h1>
+
+          <p>
+            Checking your teacher session...
+          </p>
+        </div>
       </div>
     );
   }
 
-  // =====================================================
-  // UI
-  // =====================================================
+  if (
+    showAuth ||
+    !teacher
+  ) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-card">
+          <div className="auth-icon">
+            🎓
+          </div>
+
+          <h1>
+            Lab Management
+          </h1>
+
+          <p>
+            Teacher access
+          </p>
+
+          <form
+            onSubmit={
+              handleLogin
+            }
+          >
+            <label>
+              Teacher Name
+            </label>
+
+            <input
+              value={
+                teacherDraft
+              }
+              onChange={(event) =>
+                setTeacherDraft(
+                  event.target
+                    .value
+                )
+              }
+              placeholder="Enter your name"
+              autoFocus
+            />
+
+            <label>
+              4-Digit Access Code
+            </label>
+
+            <input
+              value={
+                accessCode
+              }
+              onChange={(event) =>
+                setAccessCode(
+                  event.target.value
+                    .replace(
+                      /\D/g,
+                      ""
+                    )
+                    .slice(0, 4)
+                )
+              }
+              placeholder="••••"
+              inputMode="numeric"
+              maxLength={4}
+              type="password"
+            />
+
+            {authError && (
+              <div className="auth-error">
+                {authError}
+              </div>
+            )}
+
+            <button
+              className="primary auth-submit"
+              type="submit"
+              disabled={
+                authLoading
+              }
+            >
+              {authLoading
+                ? "Please wait..."
+                : "Continue"}
+            </button>
+          </form>
+
+          <small className="auth-note">
+            New teacher? Your name and
+            4-digit code will create your
+            teacher account automatically.
+          </small>
+        </div>
+      </div>
+    );
+  }
+
+  // ====================================================
+  // MAIN UI
+  // ====================================================
 
   return (
-    <div className="app">
-
-      {/* TOP BAR */}
-
+    <div className="app-shell">
       <header className="topbar">
         <div>
           <h1>
             Lab Management
           </h1>
 
-{teacherName && (
-  <p>
-    Teacher: <strong>{teacherName}</strong>{" "}
-    <button
-      type="button"
-      className="edit-teacher-btn"
-      onClick={() => setShowTeacherForm(true)}
-    >
-      Edit
-    </button>
-  </p>
-)}
+          <div className="teacher-line">
+            Teacher:{" "}
+            <strong>
+              {teacherName}
+            </strong>
+
+            <button
+              className="edit-teacher-btn"
+              onClick={() =>
+                setEditingTeacher(
+                  true
+                )
+              }
+            >
+              Edit
+            </button>
+          </div>
         </div>
 
-        <button
-          className="primary"
-          onClick={() =>
-            setShowLabForm(true)
-          }
-        >
-          + New Lab
-        </button>
+        <div className="topbar-actions">
+          <button
+            className="secondary"
+            onClick={logout}
+          >
+            🔒 Lock
+          </button>
+        </div>
       </header>
 
-      <main className="main">
+      <main className="content">
+        <section className="toolbar">
+          <div className="toolbar-left">
+            <button
+              className="primary"
+              onClick={() =>
+                setShowLabForm(
+                  true
+                )
+              }
+            >
+              + New Lab
+            </button>
 
-        {/* LABS */}
+            {selectedLab && (
+              <>
+                <button
+                  className="secondary"
+                  onClick={
+                    renameLab
+                  }
+                >
+                  Edit Lab
+                </button>
 
-        <section className="lab-section">
-          <div className="section-title">
-            <div>
-              <h2>
-                My Labs
-              </h2>
-
-              <span>
-                Create and manage
-                your subject labs
-              </span>
-            </div>
+                <button
+                  className="danger"
+                  onClick={
+                    deleteLab
+                  }
+                >
+                  Delete Lab
+                </button>
+              </>
+            )}
           </div>
 
-          {labs.length === 0 ? (
-            <div className="empty">
-              <h3>
-                No labs created
-              </h3>
+          <input
+            className="search-box"
+            placeholder="Search student or roll no..."
+            value={search}
+            onChange={(event) =>
+              setSearch(
+                event.target.value
+              )
+            }
+          />
+        </section>
 
-              <p>
-                Create your first
-                lab to start
-                managing batches.
-              </p>
-
-              <button
-                className="primary"
-                onClick={() =>
-                  setShowLabForm(true)
-                }
-              >
-                + Create Lab
-              </button>
+        <section className="workspace">
+          <aside className="sidebar">
+            <div className="sidebar-title">
+              My Labs
             </div>
-          ) : (
-            <div className="lab-tabs">
-              {labs.map((lab) => (
+
+            {loading ? (
+              <div className="empty-text">
+                Loading...
+              </div>
+            ) : labs.length ===
+              0 ? (
+              <div className="empty-text">
+                No labs yet.
+              </div>
+            ) : (
+              labs.map((lab) => (
                 <button
                   key={lab._id}
                   className={
                     selectedLabId ===
                     lab._id
-                      ? "lab-tab active"
-                      : "lab-tab"
+                      ? "lab-item active"
+                      : "lab-item"
                   }
                   onClick={() => {
                     setSelectedLabId(
                       lab._id
                     );
-                    setActiveBatchId("");
+                    setActiveBatchId(
+                      lab.batches?.[0]
+                        ?.id || ""
+                    );
                     setSearch("");
-                    setSaved(false);
-                    setSaveError("");
                   }}
                 >
                   <strong>
                     {lab.name}
                   </strong>
 
-                  <small>
-                    {lab.batches.length}{" "}
-                    batch
-                    {lab.batches.length !==
-                    1
-                      ? "es"
-                      : ""}
-                  </small>
+                  <span>
+                    {lab.subject ||
+                      "No subject"}
+                  </span>
                 </button>
-              ))}
-            </div>
-          )}
-        </section>
+              ))
+            )}
+          </aside>
 
-        {/* WORKSPACE */}
-
-        {selectedLab && (
-          <section className="workspace">
-
-            <div className="workspace-header">
-              <div>
+          <section className="main-panel">
+            {!selectedLab ? (
+              <div className="empty-panel">
                 <h2>
-                  {selectedLab.name}
+                  Create your first lab
                 </h2>
 
-                {selectedLab.subject && (
-                  <p>
-                    {selectedLab.subject}
-                  </p>
-                )}
-              </div>
-
-              <div className="actions">
-
-                <button
-                  className="secondary"
-                  onClick={() =>
-                    setShowBatchForm(
-                      true
-                    )
-                  }
-                >
-                  + Add Batch
-                </button>
-
-                <button
-                  className="danger-outline"
-                  onClick={deleteLab}
-                >
-                  Delete Lab
-                </button>
-
-              </div>
-            </div>
-
-            {/* BATCH TABS */}
-
-            <div className="batch-tabs">
-              {selectedLab.batches.map(
-                (batch) => (
-                  <button
-                    key={batch.id}
-                    className={
-                      activeBatchId ===
-                      batch.id
-                        ? "batch-tab active"
-                        : "batch-tab"
-                    }
-                    onClick={() => {
-                      setActiveBatchId(
-                        batch.id
-                      );
-                      setSearch("");
-                      setSaved(false);
-                      setSaveError("");
-                    }}
-                  >
-                    {batch.name}
-                  </button>
-                )
-              )}
-            </div>
-
-            {!activeBatch ? (
-              <div className="empty">
-                <h3>
-                  Select or create
-                  a batch
-                </h3>
+                <p>
+                  Start by creating a lab
+                  and then add batches.
+                </p>
 
                 <button
                   className="primary"
                   onClick={() =>
-                    setShowBatchForm(
+                    setShowLabForm(
                       true
                     )
                   }
                 >
-                  + Create Batch
+                  + Create Lab
                 </button>
               </div>
             ) : (
               <>
-                {/* BATCH HEADER */}
-
-                <div className="batch-header">
+                <div className="lab-header">
                   <div>
                     <h2>
-                      {activeBatch.name}
+                      {selectedLab.name}
                     </h2>
 
                     <p>
-                      {
-                        activeBatch
-                          .students
-                          .length
-                      }{" "}
-                      students
+                      {selectedLab.subject ||
+                        "No subject"}
                     </p>
                   </div>
 
-                  <div className="actions">
-
-                    <button
-                      className="secondary"
-                      onClick={
-                        addStudent
-                      }
-                    >
-                      + Student
-                    </button>
-
-                    <button
-                      className="secondary"
-                      onClick={() =>
-                        setShowColumnForm(
-                          true
-                        )
-                      }
-                    >
-                      + Column
-                    </button>
-
-                    <button
-                      className="danger-outline"
-                      onClick={
-                        deleteBatch
-                      }
-                    >
-                      Delete Batch
-                    </button>
-
-                  </div>
-                </div>
-
-                {/* SEARCH */}
-
-                <div className="table-tools">
-                  <input
-                    className="search"
-                    placeholder="Search by name or roll number..."
-                    value={search}
-                    onChange={(event) =>
-                      setSearch(
-                        event.target.value
+                  <button
+                    className="secondary"
+                    onClick={() =>
+                      setShowBatchForm(
+                        true
                       )
                     }
-                  />
-                </div>
-
-                {/* TABLE */}
-
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-
-                        <th>
-                          Roll No
-                        </th>
-
-                        <th>
-                          Name
-                        </th>
-
-                        <th>
-                          Age
-                        </th>
-
-                        {activeBatch.columns.map(
-                          (column) => (
-                            <th
-                              key={
-                                column.id
-                              }
-                            >
-                              <div className="column-head">
-
-                                <input
-                                  value={
-                                    column.label
-                                  }
-                                  onChange={(
-                                    event
-                                  ) =>
-                                    updateColumn(
-                                      column.id,
-                                      {
-                                        label:
-                                          event
-                                            .target
-                                            .value
-                                      }
-                                    )
-                                  }
-                                />
-
-                                {column.type ===
-                                  "number" && (
-                                  <small>
-                                    /
-                                    {
-                                      column.maxMarks
-                                    }
-                                  </small>
-                                )}
-
-                                {!column.builtIn && (
-                                  <button
-                                    type="button"
-                                    className="delete-column"
-                                    onClick={() =>
-                                      deleteColumn(
-                                        column.id
-                                      )
-                                    }
-                                    title="Delete custom column"
-                                    aria-label="Delete custom column"
-                                  >
-                                    🗑
-                                  </button>
-                                )}
-
-                              </div>
-                            </th>
-                          )
-                        )}
-
-                        <th>
-                          Total
-                        </th>
-
-                        <th>
-                          Action
-                        </th>
-
-                      </tr>
-                    </thead>
-
-                    <tbody>
-
-                      {visibleStudents.length ===
-                      0 ? (
-                        <tr>
-                          <td
-                            colSpan={
-                              5 +
-                              activeBatch
-                                .columns
-                                .length
-                            }
-                            className="no-data"
-                          >
-                            No students
-                            found.
-                          </td>
-                        </tr>
-                      ) : (
-                        visibleStudents.map(
-                          (student) => (
-                            <tr
-                              key={
-                                student.id
-                              }
-                            >
-
-                              <td>
-                                <input
-                                  value={
-                                    student.rollNo ||
-                                    ""
-                                  }
-                                  onChange={(
-                                    event
-                                  ) =>
-                                    updateStudent(
-                                      student.id,
-                                      {
-                                        rollNo:
-                                          event
-                                            .target
-                                            .value
-                                      }
-                                    )
-                                  }
-                                />
-                              </td>
-
-                              <td>
-                                <input
-                                  value={
-                                    student.name ||
-                                    ""
-                                  }
-                                  onChange={(
-                                    event
-                                  ) =>
-                                    updateStudent(
-                                      student.id,
-                                      {
-                                        name:
-                                          event
-                                            .target
-                                            .value
-                                      }
-                                    )
-                                  }
-                                />
-                              </td>
-
-                              <td>
-                                <input
-                                  className="age-input"
-                                  type="number"
-                                  min="1"
-                                  value={
-                                    student.age ??
-                                    ""
-                                  }
-                                  onChange={(
-                                    event
-                                  ) =>
-                                    updateStudent(
-                                      student.id,
-                                      {
-                                        age:
-                                          event
-                                            .target
-                                            .value ===
-                                          ""
-                                            ? ""
-                                            : Number(
-                                                event
-                                                  .target
-                                                  .value
-                                              )
-                                      }
-                                    )
-                                  }
-                                />
-                              </td>
-
-                              {activeBatch.columns.map(
-                                (column) => (
-                                  <td
-                                    key={
-                                      column.id
-                                    }
-                                  >
-
-                                    {column.type ===
-                                    "status" ? (
-                                      <select
-                                        value={
-                                          student
-                                            .values?.[
-                                            column
-                                              .id
-                                          ] ||
-                                          "Pending"
-                                        }
-                                        onChange={(
-                                          event
-                                        ) =>
-                                          updateStudentValue(
-                                            student.id,
-                                            column.id,
-                                            event
-                                              .target
-                                              .value
-                                          )
-                                        }
-                                      >
-                                        <option value="Pending">
-                                          Pending
-                                        </option>
-
-                                        <option value="Submitted">
-                                          Submitted
-                                        </option>
-                                      </select>
-                                    ) : (
-                                      <input
-                                        type={
-                                          column.type ===
-                                          "number"
-                                            ? "number"
-                                            : "text"
-                                        }
-                                        min={
-                                          column.type ===
-                                          "number"
-                                            ? "0"
-                                            : undefined
-                                        }
-                                        max={
-                                          column.type ===
-                                            "number" &&
-                                          column.maxMarks >
-                                            0
-                                            ? column.maxMarks
-                                            : undefined
-                                        }
-                                        value={
-                                          student
-                                            .values?.[
-                                            column
-                                              .id
-                                          ] ??
-                                          ""
-                                        }
-                                        onChange={(
-                                          event
-                                        ) =>
-                                          updateStudentValue(
-                                            student.id,
-                                            column.id,
-                                            event
-                                              .target
-                                              .value
-                                          )
-                                        }
-                                      />
-                                    )}
-
-                                  </td>
-                                )
-                              )}
-
-                              <td className="total">
-                                {getTotal(
-                                  student
-                                )}
-                              </td>
-
-                              <td>
-                                <button
-                                  className="delete-row"
-                                  onClick={() =>
-                                    deleteStudent(
-                                      student.id
-                                    )
-                                  }
-                                  title="Delete student"
-                                >
-                                  🗑
-                                </button>
-                              </td>
-
-                            </tr>
-                          )
-                        )
-                      )}
-
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* SAVE */}
-
-                <div className="save-area">
-
-                  {saveError && (
-                    <span className="save-error">
-                      {saveError}
-                    </span>
-                  )}
-
-                  <button
-                    className={
-                      saved
-                        ? "save-button saved"
-                        : "save-button"
-                    }
-                    onClick={saveBatch}
-                    disabled={saving}
                   >
-                    {saving
-                      ? "Saving..."
-                      : saved
-                      ? "✓ Saved Successfully"
-                      : "Save Batch"}
+                    + Add Batch
                   </button>
-
-                </div>
-              </>
-            )}
-          </section>
-        )}
-      </main>
-
-      {/* =====================================================
-          LABBOT BUTTON
-      ===================================================== */}
-
-      <button
-        className="chat-button"
-        onClick={() =>
-          setChatOpen(!chatOpen)
-        }
-        title="Open LabBot"
-      >
-        🤖
-      </button>
-
-      {/* =====================================================
-          LABBOT
-      ===================================================== */}
-
-      {chatOpen && (
-        <div className="chatbox">
-
-          <div className="chat-header">
-
-            <div>
-              <strong>
-                LabBot
-              </strong>
-
-              <span>
-                Ask about your
-                lab data
-              </span>
-            </div>
-
-            <div className="chat-header-actions">
-
-              <button
-                type="button"
-                className="chat-help-button"
-                onClick={() =>
-                  setShowBotHelp(
-                    !showBotHelp
-                  )
-                }
-                title="How to use LabBot"
-                aria-label="How to use LabBot"
-              >
-                ⓘ
-              </button>
-
-              <button
-                type="button"
-                className="chat-close-button"
-                onClick={() =>
-                  setChatOpen(false)
-                }
-                title="Close LabBot"
-                aria-label="Close LabBot"
-              >
-                ×
-              </button>
-
-            </div>
-          </div>
-
-          {/* HELP */}
-
-          {showBotHelp && (
-            <div className="bot-help">
-
-              <div className="bot-help-title">
-                <div>
-                  <strong>
-                    How to use LabBot
-                  </strong>
-
-                  <span>
-                    Quick guide
-                  </span>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    setShowBotHelp(false)
-                  }
-                  aria-label="Close help"
-                >
-                  ×
-                </button>
-              </div>
-
-              <div className="bot-help-content">
-
-                <p>
-                  LabBot answers
-                  questions using
-                  the lab, batch,
-                  student,
-                  experiment,
-                  assignment and
-                  marks data saved
-                  in this app.
-                </p>
-
-                <h4>
-                  What can I ask?
-                </h4>
-
-                <ul>
-                  <li>
-                    Find submitted
-                    or pending work
-                  </li>
-
-                  <li>
-                    Find students
-                    in a batch
-                  </li>
-
-                  <li>
-                    Count students
-                  </li>
-
-                  <li>
-                    Check experiment
-                    or assignment
-                    marks
-                  </li>
-
-                  <li>
-                    Check a
-                    student's total
-                    marks
-                  </li>
-                </ul>
-
-                <h4>
-                  Common commands
-                </h4>
-
-                <div className="bot-examples">
-                  {helpExamples.map(
-                    (
-                      example,
-                      index
-                    ) => (
+                <div className="batch-tabs">
+                  {selectedLab.batches?.map(
+                    (batch) => (
                       <button
-                        type="button"
-                        key={index}
+                        key={batch.id}
+                        className={
+                          activeBatchId ===
+                          batch.id
+                            ? "batch-tab active"
+                            : "batch-tab"
+                        }
                         onClick={() => {
-                          setQuestion(
-                            example
+                          setActiveBatchId(
+                            batch.id
                           );
-                          setShowBotHelp(
-                            false
-                          );
+                          setSearch("");
+                          setSaved(false);
                         }}
                       >
-                        {example}
+                        {batch.name}
                       </button>
                     )
                   )}
                 </div>
 
-                <div className="bot-help-note">
-                  <strong>
-                    Tip:
-                  </strong>{" "}
-                  You can use normal
-                  words such as{" "}
-                  <b>done</b>,{" "}
-                  <b>completed</b>,{" "}
-                  <b>submitted</b>,{" "}
-                  <b>pending</b>,{" "}
-                  <b>who</b>,{" "}
-                  <b>which</b> and{" "}
-                  <b>how many</b>.
-                </div>
+                {!activeBatch ? (
+                  <div className="empty-panel small">
+                    <h3>
+                      No batch selected
+                    </h3>
 
-              </div>
-            </div>
-          )}
+                    <button
+                      className="primary"
+                      onClick={() =>
+                        setShowBatchForm(
+                          true
+                        )
+                      }
+                    >
+                      + Add Batch
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="batch-toolbar">
+                      <div>
+                        <input
+                          className="batch-name-input"
+                          value={
+                            activeBatch.name
+                          }
+                          onChange={(event) =>
+                            updateBatch({
+                              name: event
+                                .target
+                                .value
+                            })
+                          }
+                        />
 
-          {/* MESSAGES */}
+                        <span className="student-count">
+                          {
+                            activeBatch
+                              .students
+                              .length
+                          }{" "}
+                          students
+                        </span>
+                      </div>
 
-          <div className="chat-messages">
-            {chatMessages.map(
-              (message, index) => (
-                <div
-                  key={index}
-                  className={
-                    message.role ===
-                    "user"
-                      ? "message user"
-                      : "message bot"
-                  }
-                >
-                  {message.text
-                    .split("\n")
-                    .map(
-                      (line, i) => (
-                        <div key={i}>
-                          {line}
-                        </div>
-                      )
-                    )}
-                </div>
-              )
+                      <div className="batch-actions">
+                        <button
+                          className="secondary"
+                          onClick={
+                            addStudent
+                          }
+                        >
+                          + Student
+                        </button>
+
+                        <button
+                          className="secondary"
+                          onClick={() =>
+                            setShowColumnForm(
+                              true
+                            )
+                          }
+                        >
+                          + Column
+                        </button>
+
+                        <button
+                          className={
+                            saved
+                              ? "save-btn saved"
+                              : "save-btn"
+                          }
+                          onClick={
+                            saveBatch
+                          }
+                          disabled={
+                            saving
+                          }
+                        >
+                          {saving
+                            ? "Saving..."
+                            : saved
+                            ? "✓ Saved"
+                            : "Save"}
+                        </button>
+
+                        <button
+                          className="danger"
+                          onClick={
+                            deleteBatch
+                          }
+                        >
+                          Delete Batch
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="table-wrapper">
+                      <table className="student-table">
+                        <thead>
+                          <tr>
+                            <th>
+                              Roll No
+                            </th>
+
+                            <th>
+                              Name
+                            </th>
+
+                            <th>
+                              Age
+                            </th>
+
+                            {activeBatch.columns.map(
+                              (
+                                column
+                              ) => (
+                                <th
+                                  key={
+                                    column.id
+                                  }
+                                >
+                                  <div className="column-header">
+                                    <span>
+                                      {
+                                        column.label
+                                      }
+                                    </span>
+
+                                    <button
+                                      className="column-delete"
+                                      onClick={() =>
+                                        deleteColumn(
+                                          column.id
+                                        )
+                                      }
+                                      title="Delete column"
+                                    >
+                                      🗑
+                                    </button>
+                                  </div>
+
+                                  {column.type ===
+                                    "number" &&
+                                    column.maxMarks >
+                                      0 && (
+                                      <small>
+                                        /{" "}
+                                        {
+                                          column.maxMarks
+                                        }
+                                      </small>
+                                    )}
+                                </th>
+                              )
+                            )}
+
+                            <th>
+                              Total
+                            </th>
+
+                            <th>
+                              Action
+                            </th>
+                          </tr>
+                        </thead>
+
+                        <tbody>
+                          {visibleStudents.map(
+                            (
+                              student
+                            ) => (
+                              <tr
+                                key={
+                                  student.id
+                                }
+                              >
+                                <td>
+                                  <input
+                                    value={
+                                      student.rollNo ||
+                                      ""
+                                    }
+                                    onChange={(
+                                      event
+                                    ) =>
+                                      updateStudent(
+                                        student.id,
+                                        {
+                                          rollNo:
+                                            event
+                                              .target
+                                              .value
+                                        }
+                                      )
+                                    }
+                                  />
+                                </td>
+
+                                <td>
+                                  <input
+                                    value={
+                                      student.name ||
+                                      ""
+                                    }
+                                    onChange={(
+                                      event
+                                    ) =>
+                                      updateStudent(
+                                        student.id,
+                                        {
+                                          name:
+                                            event
+                                              .target
+                                              .value
+                                        }
+                                      )
+                                    }
+                                  />
+                                </td>
+
+                                <td>
+                                  <input
+                                    type="number"
+                                    value={
+                                      student.age ??
+                                      ""
+                                    }
+                                    onChange={(
+                                      event
+                                    ) =>
+                                      updateStudent(
+                                        student.id,
+                                        {
+                                          age:
+                                            event
+                                              .target
+                                              .value
+                                        }
+                                      )
+                                    }
+                                  />
+                                </td>
+
+                                {activeBatch.columns.map(
+                                  (
+                                    column
+                                  ) => (
+                                    <td
+                                      key={
+                                        column.id
+                                      }
+                                    >
+                                      {column.type ===
+                                      "status" ? (
+                                        <select
+                                          value={
+                                            student
+                                              .values?.[
+                                              column
+                                                .id
+                                            ] ||
+                                            "Pending"
+                                          }
+                                          onChange={(
+                                            event
+                                          ) =>
+                                            updateStudentValue(
+                                              student.id,
+                                              column.id,
+                                              event
+                                                .target
+                                                .value
+                                            )
+                                          }
+                                        >
+                                          <option>
+                                            Pending
+                                          </option>
+
+                                          <option>
+                                            Submitted
+                                          </option>
+                                        </select>
+                                      ) : (
+                                        <input
+                                          type={
+                                            column.type ===
+                                            "number"
+                                              ? "number"
+                                              : "text"
+                                          }
+                                          value={
+                                            student
+                                              .values?.[
+                                              column
+                                                .id
+                                            ] ||
+                                            ""
+                                          }
+                                          onChange={(
+                                            event
+                                          ) =>
+                                            updateStudentValue(
+                                              student.id,
+                                              column.id,
+                                              event
+                                                .target
+                                                .value
+                                            )
+                                          }
+                                        />
+                                      )}
+                                    </td>
+                                  )
+                                )}
+
+                                <td className="total-cell">
+                                  {
+                                    getTotal(
+                                      student
+                                    )
+                                  }
+                                </td>
+
+                                <td>
+                                  <button
+                                    className="row-delete"
+                                    onClick={() =>
+                                      deleteStudent(
+                                        student.id
+                                      )
+                                    }
+                                  >
+                                    Delete
+                                  </button>
+                                </td>
+                              </tr>
+                            )
+                          )}
+
+                          {!visibleStudents.length && (
+                            <tr>
+                              <td
+                                colSpan={
+                                  6 +
+                                  activeBatch
+                                    .columns
+                                    .length
+                                }
+                                className="no-data"
+                              >
+                                No students found.
+                                Click
+                                <strong>
+                                  {" "}
+                                  + Student
+                                </strong>{" "}
+                                to add one.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </>
             )}
+          </section>
+        </section>
+      </main>
 
-            {chatLoading && (
-              <div className="message bot">
-                Checking lab
-                data...
-              </div>
-            )}
-          </div>
-
-          {/* INPUT */}
-
-          <form
-            className="chat-form"
-            onSubmit={askBot}
-          >
-            <input
-              value={question}
-              onChange={(event) =>
-                setQuestion(
-                  event.target.value
-                )
-              }
-              placeholder="Ask about your data..."
-            />
-
-            <button
-              type="submit"
-              disabled={chatLoading}
-            >
-              ➤
-            </button>
-          </form>
-
-        </div>
-      )}
-
-      {/* =====================================================
-          CREATE LAB
-      ===================================================== */}
+      {/* ================================================ */}
+      {/* LAB FORM */}
+      {/* ================================================ */}
 
       {showLabForm && (
-        <div className="modal-overlay">
-
+        <div className="modal-backdrop">
           <form
-            className="modal"
+            className="modal-card"
             onSubmit={createLab}
           >
             <h2>
-              Create Lab
+              Create New Lab
             </h2>
 
+            <label>
+              Lab Name
+            </label>
+
             <input
-              placeholder="Lab name"
+              autoFocus
               value={labName}
               onChange={(event) =>
                 setLabName(
                   event.target.value
                 )
               }
-              autoFocus
+              placeholder="Web Technology Lab"
             />
 
+            <label>
+              Subject
+            </label>
+
             <input
-              placeholder="Subject (optional)"
               value={subjectName}
               onChange={(event) =>
                 setSubjectName(
                   event.target.value
                 )
               }
+              placeholder="Web Technology"
             />
 
             <div className="modal-actions">
-
               <button
                 type="button"
                 className="secondary"
@@ -1891,46 +1968,46 @@ function App() {
               </button>
 
               <button
-                type="submit"
                 className="primary"
+                type="submit"
               >
-                Create
+                Create Lab
               </button>
-
             </div>
           </form>
-
         </div>
       )}
 
-      {/* =====================================================
-          CREATE BATCH
-      ===================================================== */}
+      {/* ================================================ */}
+      {/* BATCH FORM */}
+      {/* ================================================ */}
 
       {showBatchForm && (
-        <div className="modal-overlay">
-
+        <div className="modal-backdrop">
           <form
-            className="modal"
+            className="modal-card"
             onSubmit={createBatch}
           >
             <h2>
-              Create Batch
+              Add Batch
             </h2>
 
+            <label>
+              Batch Name
+            </label>
+
             <input
-              placeholder="Example: I1"
+              autoFocus
               value={batchName}
               onChange={(event) =>
                 setBatchName(
                   event.target.value
                 )
               }
-              autoFocus
+              placeholder="I1"
             />
 
             <div className="modal-actions">
-
               <button
                 type="button"
                 className="secondary"
@@ -1944,49 +2021,66 @@ function App() {
               </button>
 
               <button
-                type="submit"
                 className="primary"
+                type="submit"
               >
-                Create
+                Add Batch
               </button>
-
             </div>
           </form>
-
         </div>
       )}
 
-      {/* =====================================================
-          ADD COLUMN
-      ===================================================== */}
+      {/* ================================================ */}
+      {/* COLUMN FORM */}
+      {/* ================================================ */}
 
       {showColumnForm && (
-        <div className="modal-overlay">
-
+        <div className="modal-backdrop">
           <form
-            className="modal"
-            onSubmit={addColumn}
+            className="modal-card"
+            onSubmit={
+              addColumn
+            }
           >
             <h2>
               Add Custom Column
             </h2>
 
+            <label>
+              Column Name
+            </label>
+
             <input
-              placeholder="Column name"
-              value={columnName}
-              onChange={(event) =>
+              autoFocus
+              value={
+                columnName
+              }
+              onChange={(
+                event
+              ) =>
                 setColumnName(
-                  event.target.value
+                  event.target
+                    .value
                 )
               }
-              autoFocus
+              placeholder="Attendance"
             />
 
+            <label>
+              Type
+            </label>
+
             <select
-              value={columnType}
-              onChange={(event) =>
+              value={
+                columnType
+              }
+              onChange={(
+                event
+              ) =>
                 setColumnType(
-                  event.target.value
+                  event.target
+                    .value
                 )
               }
             >
@@ -1995,7 +2089,7 @@ function App() {
               </option>
 
               <option value="number">
-                Marks / Number
+                Number / Marks
               </option>
 
               <option value="text">
@@ -2005,21 +2099,30 @@ function App() {
 
             {columnType ===
               "number" && (
-              <input
-                type="number"
-                min="1"
-                placeholder="Maximum marks"
-                value={columnMarks}
-                onChange={(event) =>
-                  setColumnMarks(
-                    event.target.value
-                  )
-                }
-              />
+              <>
+                <label>
+                  Maximum Marks
+                </label>
+
+                <input
+                  type="number"
+                  value={
+                    columnMarks
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    setColumnMarks(
+                      event.target
+                        .value
+                    )
+                  }
+                  placeholder="10"
+                />
+              </>
             )}
 
             <div className="modal-actions">
-
               <button
                 type="button"
                 className="secondary"
@@ -2033,65 +2136,228 @@ function App() {
               </button>
 
               <button
-                type="submit"
                 className="primary"
+                type="submit"
               >
                 Add Column
               </button>
-
             </div>
           </form>
-
         </div>
       )}
 
-      {/* =====================================================
-          FIRST-TIME TEACHER NAME
-      ===================================================== */}
+      {/* ================================================ */}
+      {/* TEACHER NAME FORM */}
+      {/* ================================================ */}
 
-      {showTeacherForm && (
-        <div className="modal-overlay">
-
+      {editingTeacher && (
+        <div className="modal-backdrop">
           <form
-            className="modal"
-            onSubmit={saveTeacherName}
+            className="modal-card"
+            onSubmit={
+              saveTeacherName
+            }
           >
             <h2>
-              Welcome to Lab Management
+              Edit Teacher Name
             </h2>
 
-            <p>
-              Enter your name to
-              continue.
-            </p>
+            <label>
+              Teacher Name
+            </label>
 
             <input
-              type="text"
-              placeholder="Teacher name"
-              value={teacherName}
-              onChange={(event) =>
-                setTeacherName(
-                  event.target.value
+              autoFocus
+              value={
+                teacherDraft
+              }
+              onChange={(
+                event
+              ) =>
+                setTeacherDraft(
+                  event.target
+                    .value
                 )
               }
-              autoFocus
             />
 
             <div className="modal-actions">
-
               <button
-                type="submit"
-                className="primary"
+                type="button"
+                className="secondary"
+                onClick={() => {
+                  setTeacherDraft(
+                    teacherName
+                  );
+                  setEditingTeacher(
+                    false
+                  );
+                }}
               >
-                Continue
+                Cancel
               </button>
 
+              <button
+                className="primary"
+                type="submit"
+              >
+                Save Name
+              </button>
             </div>
           </form>
-
         </div>
       )}
 
+      {/* ================================================ */}
+      {/* LABBOT */}
+      {/* ================================================ */}
+
+      {chatOpen && (
+        <div className="chat-box">
+          <div className="chat-header">
+            <div>
+              <strong>
+                LabBot
+              </strong>
+
+              <span>
+                Your lab data assistant
+              </span>
+            </div>
+
+            <div className="chat-header-actions">
+              <button
+                className="chat-info"
+                onClick={() =>
+                  setShowBotHelp(
+                    (value) =>
+                      !value
+                  )
+                }
+                title="LabBot help"
+              >
+                ⓘ
+              </button>
+
+              <button
+                className="chat-close"
+                onClick={() =>
+                  setChatOpen(
+                    false
+                  )
+                }
+              >
+                ×
+              </button>
+            </div>
+          </div>
+
+          {showBotHelp && (
+            <div className="bot-help">
+              <strong>
+                You can ask:
+              </strong>
+
+              <ul>
+                <li>
+                  I2 pending
+                  experiment files
+                </li>
+
+                <li>
+                  Who submitted
+                  assignment in I3?
+                </li>
+
+                <li>
+                  How many students
+                  are in I2?
+                </li>
+
+                <li>
+                  I1 students with
+                  marks below 5
+                </li>
+
+                <li>
+                  Show I2 students
+                </li>
+              </ul>
+            </div>
+          )}
+
+          <div className="chat-messages">
+            {chatMessages.map(
+              (
+                message,
+                index
+              ) => (
+                <div
+                  key={index}
+                  className={
+                    message.role ===
+                    "user"
+                      ? "chat-message user"
+                      : "chat-message bot"
+                  }
+                >
+                  {message.text}
+                </div>
+              )
+            )}
+
+            {chatLoading && (
+              <div className="chat-message bot">
+                Checking your lab data...
+              </div>
+            )}
+          </div>
+
+          <form
+            className="chat-input-row"
+            onSubmit={
+              askBot
+            }
+          >
+            <input
+              value={
+                question
+              }
+              onChange={(
+                event
+              ) =>
+                setQuestion(
+                  event.target
+                    .value
+                )
+              }
+              placeholder="Ask about your lab..."
+            />
+
+            <button
+              className="primary"
+              type="submit"
+              disabled={
+                chatLoading
+              }
+            >
+              Send
+            </button>
+          </form>
+        </div>
+      )}
+
+      <button
+        className="bot-float"
+        onClick={() =>
+          setChatOpen(
+            (value) => !value
+          )
+        }
+        title="Open LabBot"
+      >
+        🤖
+      </button>
     </div>
   );
 }
